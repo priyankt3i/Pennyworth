@@ -28,19 +28,33 @@
             <img id="providerBadgeIcon" class="provider-icon" src="../../public/ollama.png" alt="" />
           </button>
           <div class="window-controls">
-            <button id="windowCloseBtn" class="window-dot window-dot-close" type="button" aria-label="Close to tray">
-              <span aria-hidden="true">x</span>
+            <button 
+              id="windowCloseBtn" 
+              class="window-dot window-dot-close" 
+              type="button" 
+              data-tooltip="Close" 
+              aria-label="Close to tray"
+              title="Close to tray">
+              <span aria-hidden="true"></span>
             </button>
-            <button id="windowMinBtn" class="window-dot window-dot-min" type="button" aria-label="Minimize">
-              <span aria-hidden="true">-</span>
+            <button 
+              id="windowMinBtn" 
+              class="window-dot window-dot-min" 
+              type="button" 
+              data-tooltip="Minimize" 
+              aria-label="Minimize"
+              title="Minimize">
+              <span aria-hidden="true"></span>
             </button>
             <button
               id="windowMaxBtn"
               class="window-dot window-dot-max"
               type="button"
+              data-tooltip="Fullscreen"
+              title="Fullscreen"
               aria-label="Maximize or Restore"
             >
-              <span aria-hidden="true">+</span>
+              <span aria-hidden="true"></span>
             </button>
           </div>
         </div>

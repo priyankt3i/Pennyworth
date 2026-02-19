@@ -4,7 +4,7 @@ contextBridge.exposeInMainWorld("pennyworth", {
   getRuntimeConfig: () => ipcRenderer.invoke("pennyworth:get-runtime-config"),
   setProfile: (profileId) => ipcRenderer.invoke("pennyworth:set-profile", profileId),
   getSettings: () => ipcRenderer.invoke("pennyworth:get-settings"),
-  getProviderHealth: () => ipcRenderer.invoke("pennyworth:get-provider-health"),
+  getProviderHealth: (payload) => ipcRenderer.invoke("pennyworth:get-provider-health", payload),
   listOllamaModels: (payload) => ipcRenderer.invoke("pennyworth:list-ollama-models", payload),
   saveSettings: (payload) => ipcRenderer.invoke("pennyworth:save-settings", payload),
   getSystemContext: () => ipcRenderer.invoke("pennyworth:get-system-context"),

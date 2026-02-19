@@ -319,12 +319,15 @@ async function loadRuntime() {
     "Unable to load runtime configuration."
   );
   state.runtime = runtimeResult.runtime;
+  state.system = runtimeResult.runtime?.systemContext || null;
 
-  const systemResult = assertOk(
-    await window.pennyworth.getSystemContext(),
-    "Unable to read system context."
-  );
-  state.system = systemResult.systemContext;
+  if (!state.system) {
+    const systemResult = assertOk(
+      await window.pennyworth.getSystemContext(),
+      "Unable to read system context."
+    );
+    state.system = systemResult.systemContext;
+  }
 
   renderProfileSelect();
   updateBadges();
@@ -888,10 +891,10 @@ function renderProviderSetupStatus(providerConfig) {
   });
 }
 
-async function refreshProviderHealth(showNoProviderMessage = false) {
+async function refreshProviderHealth(showNoProviderMessage = false, force = false) {
   try {
     const result = assertOk(
-      await window.pennyworth.getProviderHealth(),
+      await window.pennyworth.getProviderHealth({ force }),
       "Failed to check provider connectivity."
     );
     const health = result.health || {};
@@ -913,7 +916,7 @@ async function refreshProviderHealth(showNoProviderMessage = false) {
 }
 
 async function ensureActiveProviderForAsk() {
-  const health = await refreshProviderHealth(false);
+  const health = await refreshProviderHealth(false, false);
   if (!health) {
     showNoProviderGuidance(true);
     return false;
@@ -978,9 +981,9 @@ async function openSettingsModal() {
       result.providerConfig.secureStorageAvailable ? "ok" : "error"
     );
     if (state.activeProviderTab === "ollama") {
-      await refreshOllamaModels(false);
+      refreshOllamaModels(false);
     }
-    await refreshProviderHealth();
+    refreshProviderHealth(false, false);
   } catch (error) {
     reportFailure("Settings error:", error, true);
   }
@@ -1038,7 +1041,7 @@ async function saveSettings() {
     populateSettingsForm(state.settings);
     await loadRuntime();
     closeSettingsModal();
-    await refreshProviderHealth();
+    await refreshProviderHealth(false, true);
 
     if (result.warnings?.length) {
       const warningText = result.warnings.join(" | ");
@@ -1179,7 +1182,7 @@ async function invokeWindowControl(action, fallbackMessage) {
 async function init() {
   registerGlobalErrorHandlers();
   await loadRuntime();
-  await refreshProviderHealth(false);
+  refreshProviderHealth(false, false);
 
   appendMessage(
     "assistant",

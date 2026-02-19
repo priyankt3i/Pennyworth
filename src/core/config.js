@@ -1,7 +1,22 @@
 ﻿const fs = require("fs");
 const path = require("path");
 
+const jsonCache = new Map();
+
 function readJson(filePath) {
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch (error) {
+    throw new Error(`Unable to read JSON file metadata '${filePath}': ${error.message}`);
+  }
+
+  const cacheKey = path.resolve(filePath);
+  const cached = jsonCache.get(cacheKey);
+  if (cached && cached.mtimeMs === stat.mtimeMs) {
+    return cached.value;
+  }
+
   let raw = "";
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -12,7 +27,12 @@ function readJson(filePath) {
   const cleaned = raw.replace(/^\uFEFF/, "");
 
   try {
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+    jsonCache.set(cacheKey, {
+      mtimeMs: stat.mtimeMs,
+      value: parsed,
+    });
+    return parsed;
   } catch (error) {
     throw new Error(`Invalid JSON in '${filePath}': ${error.message}`);
   }

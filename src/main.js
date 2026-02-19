@@ -25,6 +25,11 @@ let mainWindow;
 let tray;
 let storeCache = null;
 let storePath = null;
+let providerHealthCache = null;
+let providerHealthCacheAt = 0;
+let providerHealthInFlight = null;
+
+const PROVIDER_HEALTH_TTL_MS = 30_000;
 
 function getStorePath() {
   if (storePath) {
@@ -474,7 +479,12 @@ async function checkGeminiHealth(config, apiKey) {
   }
 }
 
-async function getProviderHealth() {
+function invalidateProviderHealthCache() {
+  providerHealthCache = null;
+  providerHealthCacheAt = 0;
+}
+
+async function fetchProviderHealth() {
   const providerState = getProviderState();
   const openaiStoredKey = await getStoredApiKey("openai");
   const geminiStoredKey = await getStoredApiKey("gemini");
@@ -488,6 +498,53 @@ async function getProviderHealth() {
   ]);
 
   return { ollama, openai, gemini };
+}
+
+async function getProviderHealth(options = {}) {
+  const force = Boolean(options?.force);
+  const ttlMs = Number(options?.ttlMs) > 0 ? Number(options.ttlMs) : PROVIDER_HEALTH_TTL_MS;
+  const ageMs = Date.now() - providerHealthCacheAt;
+
+  if (!force && providerHealthCache && ageMs < ttlMs) {
+    return {
+      health: providerHealthCache,
+      cached: true,
+      stale: false,
+      ageMs,
+    };
+  }
+
+  if (providerHealthInFlight) {
+    return providerHealthInFlight;
+  }
+
+  providerHealthInFlight = (async () => {
+    try {
+      const health = await fetchProviderHealth();
+      providerHealthCache = health;
+      providerHealthCacheAt = Date.now();
+      return {
+        health,
+        cached: false,
+        stale: false,
+        ageMs: 0,
+      };
+    } catch (error) {
+      if (providerHealthCache) {
+        return {
+          health: providerHealthCache,
+          cached: true,
+          stale: true,
+          ageMs: Date.now() - providerHealthCacheAt,
+        };
+      }
+      throw error;
+    } finally {
+      providerHealthInFlight = null;
+    }
+  })();
+
+  return providerHealthInFlight;
 }
 function normalizeAgentContext(input) {
   return {
@@ -669,6 +726,7 @@ ipcMain.handle("pennyworth:get-runtime-config", async () => {
         detection: state.detection,
         hostProfileName: state.hostProfileName,
         hostArchitecture: state.hostArchitecture,
+        systemContext: state.systemContext,
       },
     };
   } catch (error) {
@@ -765,11 +823,15 @@ ipcMain.handle("pennyworth:get-settings", async () => {
   }
 });
 
-ipcMain.handle("pennyworth:get-provider-health", async () => {
+ipcMain.handle("pennyworth:get-provider-health", async (_event, payload) => {
   try {
+    const result = await getProviderHealth(payload || {});
     return {
       ok: true,
-      health: await getProviderHealth(),
+      health: result.health,
+      cached: Boolean(result.cached),
+      stale: Boolean(result.stale),
+      ageMs: result.ageMs || 0,
     };
   } catch (error) {
     return {
@@ -835,6 +897,7 @@ ipcMain.handle("pennyworth:save-settings", async (_event, payload) => {
       }
     }
 
+    invalidateProviderHealthCache();
     const stateAfterSave = runtimeState();
     return {
       ok: true,

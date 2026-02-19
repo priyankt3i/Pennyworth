@@ -2,6 +2,10 @@
 const os = require("os");
 const { execSync } = require("child_process");
 
+const SYSTEM_CONTEXT_TTL_MS = 60_000;
+let systemContextCache = null;
+let systemContextCacheAt = 0;
+
 function tryExec(command) {
   try {
     const output = execSync(command, {
@@ -149,7 +153,7 @@ function resolvePackageManagers(platform) {
   };
 }
 
-function getSystemContext() {
+function buildSystemContext() {
   const platform = os.platform();
   const osRelease = readOsRelease();
 
@@ -174,6 +178,20 @@ function getSystemContext() {
     },
     packageManagersPresent: resolvePackageManagers(platform),
   };
+}
+
+function getSystemContext(options = {}) {
+  const force = Boolean(options?.force);
+  const ttlMs = Number(options?.ttlMs) > 0 ? Number(options.ttlMs) : SYSTEM_CONTEXT_TTL_MS;
+
+  if (!force && systemContextCache && Date.now() - systemContextCacheAt < ttlMs) {
+    return systemContextCache;
+  }
+
+  const context = buildSystemContext();
+  systemContextCache = context;
+  systemContextCacheAt = Date.now();
+  return context;
 }
 
 module.exports = {

@@ -1,0 +1,412 @@
+{
+  "defaultProfile": "cachyos",
+  "profiles": {
+    "cachyos": {
+      "name": "CachyOS",
+      "family": "arch",
+      "architectures": ["x86_64"],
+      "documentation": {
+        "rootUrl": "https://wiki.cachyos.org/",
+        "allowedDomains": ["wiki.cachyos.org", "cachyos.org"]
+      },
+      "packageManagers": ["pacman", "paru"],
+      "commands": {
+        "update": "sudo pacman -Syu",
+        "search": "pacman -Ss <package>",
+        "install": "sudo pacman -S <package>"
+      }
+    },
+    "windows_11": {
+      "name": "Windows 11",
+      "family": "windows",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://learn.microsoft.com/en-us/windows/", "allowedDomains": ["microsoft.com"] },
+      "packageManagers": ["winget", "choco"],
+      "commands": { "update": "winget upgrade --all", "install": "winget install <package>" }
+    },
+    "windows_10": {
+      "name": "Windows 10",
+      "family": "windows",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://learn.microsoft.com/en-us/windows/release-health/", "allowedDomains": ["microsoft.com"] },
+      "packageManagers": ["winget"],
+      "commands": { "update": "winget upgrade --all" }
+    },
+    "windows_server_2025": {
+      "name": "Windows Server 2025",
+      "family": "windows",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://learn.microsoft.com/en-us/windows-server/", "allowedDomains": ["microsoft.com"] },
+      "packageManagers": ["powershell"],
+      "commands": { "update": "Get-WindowsUpdate -Install" }
+    },
+    "macos_tahoe": {
+      "name": "macOS 16 Tahoe",
+      "family": "darwin",
+      "architectures": ["aarch64"],
+      "documentation": { "rootUrl": "https://support.apple.com/guide/mac-help/", "allowedDomains": ["apple.com"] },
+      "packageManagers": ["brew"],
+      "commands": { "update": "brew update && brew upgrade", "install": "brew install <package>" }
+    },
+    "macos_sequoia": {
+      "name": "macOS 15 Sequoia",
+      "family": "darwin",
+      "architectures": ["aarch64", "x86_64"],
+      "documentation": { "rootUrl": "https://support.apple.com/macos", "allowedDomains": ["apple.com"] },
+      "packageManagers": ["brew"],
+      "commands": { "update": "brew upgrade" }
+    },
+    "ubuntu_lts": {
+      "name": "Ubuntu LTS",
+      "family": "debian",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://help.ubuntu.com/", "allowedDomains": ["ubuntu.com", "canonical.com"] },
+      "packageManagers": ["apt", "snap"],
+      "commands": { "update": "sudo apt update && sudo apt upgrade -y", "install": "sudo apt install <package>" }
+    },
+    "debian_stable": {
+      "name": "Debian Stable",
+      "family": "debian",
+      "architectures": ["x86_64", "aarch64", "riscv64"],
+      "documentation": { "rootUrl": "https://www.debian.org/doc/", "allowedDomains": ["debian.org"] },
+      "packageManagers": ["apt"],
+      "commands": { "update": "sudo apt update && sudo apt upgrade" }
+    },
+    "linux_mint": {
+      "name": "Linux Mint",
+      "family": "debian",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://linuxmint-troubleshooting-guide.readthedocs.io/", "allowedDomains": ["linuxmint.com", "readthedocs.io"] },
+      "packageManagers": ["apt"],
+      "commands": { "update": "mintupdate-cli upgrade" }
+    },
+    "pop_os": {
+      "name": "Pop!_OS",
+      "family": "debian",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://support.system76.com/", "allowedDomains": ["system76.com"] },
+      "packageManagers": ["apt", "flatpak"],
+      "commands": { "update": "sudo apt update && sudo apt full-upgrade" }
+    },
+    "kali_linux": {
+      "name": "Kali Linux",
+      "family": "debian",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://www.kali.org/docs/", "allowedDomains": ["kali.org"] },
+      "packageManagers": ["apt"],
+      "commands": { "update": "sudo apt update && sudo apt full-upgrade" }
+    },
+    "zorin_os": {
+      "name": "Zorin OS",
+      "family": "debian",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://help.zorin.com/", "allowedDomains": ["zorin.com"] },
+      "packageManagers": ["apt"],
+      "commands": { "update": "sudo apt upgrade" }
+    },
+    "mx_linux": {
+      "name": "MX Linux",
+      "family": "debian",
+      "architectures": ["x86_64", "i686"],
+      "documentation": { "rootUrl": "https://mxlinux.org/wiki/", "allowedDomains": ["mxlinux.org"] },
+      "packageManagers": ["apt"],
+      "commands": { "update": "sudo apt update" }
+    },
+    "raspberry_pi_os": {
+      "name": "Raspberry Pi OS",
+      "family": "debian",
+      "architectures": ["aarch64", "armhf"],
+      "documentation": { "rootUrl": "https://www.raspberrypi.com/documentation/", "allowedDomains": ["raspberrypi.com"] },
+      "packageManagers": ["apt"],
+      "commands": { "update": "sudo apt update" }
+    },
+    "parrot_os": {
+      "name": "Parrot OS",
+      "family": "debian",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://doc.parrotsec.org/", "allowedDomains": ["parrotsec.org"] },
+      "packageManagers": ["apt"],
+      "commands": { "update": "sudo apt update" }
+    },
+    "elementary_os": {
+      "name": "elementary OS",
+      "family": "debian",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://elementary.io/docs/", "allowedDomains": ["elementary.io"] },
+      "packageManagers": ["apt", "flatpak"],
+      "commands": { "update": "sudo apt upgrade" }
+    },
+    "deepin": {
+      "name": "Deepin",
+      "family": "debian",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://www.deepin.org/en/docs/", "allowedDomains": ["deepin.org"] },
+      "packageManagers": ["apt"],
+      "commands": { "update": "sudo apt update" }
+    },
+    "bodhi_linux": {
+      "name": "Bodhi Linux",
+      "family": "debian",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://www.bodhilinux.com/w/wiki/", "allowedDomains": ["bodhilinux.com"] },
+      "packageManagers": ["apt"],
+      "commands": { "update": "sudo apt update" }
+    },
+    "tails": {
+      "name": "Tails",
+      "family": "debian",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://tails.net/doc/", "allowedDomains": ["tails.net"] },
+      "packageManagers": ["apt"],
+      "commands": { "update": "Automatic" }
+    },
+    "arch_linux": {
+      "name": "Arch Linux",
+      "family": "arch",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://wiki.archlinux.org/", "allowedDomains": ["wiki.archlinux.org"] },
+      "packageManagers": ["pacman"],
+      "commands": { "update": "sudo pacman -Syu" }
+    },
+    "manjaro": {
+      "name": "Manjaro",
+      "family": "arch",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://wiki.manjaro.org/", "allowedDomains": ["manjaro.org"] },
+      "packageManagers": ["pacman", "pamac"],
+      "commands": { "update": "pamac upgrade" }
+    },
+    "endeavouros": {
+      "name": "EndeavourOS",
+      "family": "arch",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://discovery.endeavouros.com/", "allowedDomains": ["endeavouros.com"] },
+      "packageManagers": ["pacman", "yay"],
+      "commands": { "update": "yay -Syu" }
+    },
+    "steamos": {
+      "name": "SteamOS",
+      "family": "arch",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://help.steampowered.com/en/wizard/HelpWithSteamDeck", "allowedDomains": ["steampowered.com"] },
+      "packageManagers": ["pacman"],
+      "commands": { "update": "steamos-update" }
+    },
+    "garuda": {
+      "name": "Garuda Linux",
+      "family": "arch",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://wiki.garudalinux.org/", "allowedDomains": ["garudalinux.org"] },
+      "packageManagers": ["pacman", "garuda-update"],
+      "commands": { "update": "garuda-update" }
+    },
+    "artix": {
+      "name": "Artix Linux",
+      "family": "arch",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://wiki.artixlinux.org/", "allowedDomains": ["artixlinux.org"] },
+      "packageManagers": ["pacman"],
+      "commands": { "update": "sudo pacman -Syu" }
+    },
+    "blackarch": {
+      "name": "BlackArch",
+      "family": "arch",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://blackarch.org/guide.html", "allowedDomains": ["blackarch.org"] },
+      "packageManagers": ["pacman"],
+      "commands": { "update": "sudo pacman -Syu" }
+    },
+    "fedora_workstation": {
+      "name": "Fedora Workstation",
+      "family": "fedora",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://docs.fedoraproject.org/", "allowedDomains": ["fedoraproject.org"] },
+      "packageManagers": ["dnf"],
+      "commands": { "update": "sudo dnf upgrade" }
+    },
+    "rhel": {
+      "name": "Red Hat Enterprise Linux",
+      "family": "fedora",
+      "architectures": ["x86_64", "aarch64", "s390x"],
+      "documentation": { "rootUrl": "https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux", "allowedDomains": ["redhat.com"] },
+      "packageManagers": ["dnf"],
+      "commands": { "update": "sudo dnf upgrade" }
+    },
+    "almalinux": {
+      "name": "AlmaLinux",
+      "family": "fedora",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://wiki.almalinux.org/", "allowedDomains": ["almalinux.org"] },
+      "packageManagers": ["dnf"],
+      "commands": { "update": "sudo dnf upgrade" }
+    },
+    "rocky_linux": {
+      "name": "Rocky Linux",
+      "family": "fedora",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://docs.rockylinux.org/", "allowedDomains": ["rockylinux.org"] },
+      "packageManagers": ["dnf"],
+      "commands": { "update": "sudo dnf upgrade" }
+    },
+    "nobara": {
+      "name": "Nobara Project",
+      "family": "fedora",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://nobaraproject.org/category/docs/", "allowedDomains": ["nobaraproject.org"] },
+      "packageManagers": ["dnf"],
+      "commands": { "update": "nobara-sync" }
+    },
+    "centos_stream": {
+      "name": "CentOS Stream",
+      "family": "fedora",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://www.centos.org/docs/", "allowedDomains": ["centos.org"] },
+      "packageManagers": ["dnf"],
+      "commands": { "update": "sudo dnf upgrade" }
+    },
+    "amazon_linux": {
+      "name": "Amazon Linux 2023",
+      "family": "fedora",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://docs.aws.amazon.com/linux/", "allowedDomains": ["amazon.com", "aws.amazon.com"] },
+      "packageManagers": ["dnf"],
+      "commands": { "update": "sudo dnf upgrade" }
+    },
+    "opensuse_tumbleweed": {
+      "name": "openSUSE Tumbleweed",
+      "family": "suse",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://en.opensuse.org/Portal:Tumbleweed", "allowedDomains": ["opensuse.org"] },
+      "packageManagers": ["zypper"],
+      "commands": { "update": "sudo zypper dup" }
+    },
+    "opensuse_leap": {
+      "name": "openSUSE Leap",
+      "family": "suse",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://doc.opensuse.org/", "allowedDomains": ["opensuse.org"] },
+      "packageManagers": ["zypper"],
+      "commands": { "update": "sudo zypper up" }
+    },
+    "suse_enterprise": {
+      "name": "SUSE Linux Enterprise",
+      "family": "suse",
+      "architectures": ["x86_64", "s390x"],
+      "documentation": { "rootUrl": "https://documentation.suse.com/", "allowedDomains": ["suse.com"] },
+      "packageManagers": ["zypper"],
+      "commands": { "update": "sudo zypper up" }
+    },
+    "gentoo": {
+      "name": "Gentoo",
+      "family": "gentoo",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://wiki.gentoo.org/", "allowedDomains": ["gentoo.org"] },
+      "packageManagers": ["emerge"],
+      "commands": { "update": "sudo emaint --auto sync && sudo emerge --update --deep --with-bdeps=y @world" }
+    },
+    "calculate_linux": {
+      "name": "Calculate Linux",
+      "family": "gentoo",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://wiki.calculate-linux.org/", "allowedDomains": ["calculate-linux.org"] },
+      "packageManagers": ["cl-update"],
+      "commands": { "update": "cl-update" }
+    },
+    "nixos": {
+      "name": "NixOS",
+      "family": "independent",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://nixos.org/manual/nixos/stable/", "allowedDomains": ["nixos.org"] },
+      "packageManagers": ["nix-env"],
+      "commands": { "update": "sudo nixos-rebuild switch --upgrade" }
+    },
+    "solus": {
+      "name": "Solus",
+      "family": "independent",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://help.getsol.us/", "allowedDomains": ["getsol.us"] },
+      "packageManagers": ["eopkg"],
+      "commands": { "update": "sudo eopkg upgrade" }
+    },
+    "void_linux": {
+      "name": "Void Linux",
+      "family": "independent",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://docs.voidlinux.org/", "allowedDomains": ["voidlinux.org"] },
+      "packageManagers": ["xbps"],
+      "commands": { "update": "sudo xbps-install -Su" }
+    },
+    "alpine": {
+      "name": "Alpine Linux",
+      "family": "independent",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://wiki.alpinelinux.org/", "allowedDomains": ["alpinelinux.org"] },
+      "packageManagers": ["apk"],
+      "commands": { "update": "sudo apk update && sudo apk upgrade" }
+    },
+    "clear_linux": {
+      "name": "Clear Linux",
+      "family": "independent",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://www.clearlinux.org/documentation/", "allowedDomains": ["clearlinux.org"] },
+      "packageManagers": ["swupd"],
+      "commands": { "update": "sudo swupd update" }
+    },
+    "slackware": {
+      "name": "Slackware",
+      "family": "independent",
+      "architectures": ["x86_64", "i686"],
+      "documentation": { "rootUrl": "https://docs.slackware.com/", "allowedDomains": ["slackware.com"] },
+      "packageManagers": ["slackpkg"],
+      "commands": { "update": "sudo slackpkg update && sudo slackpkg upgrade-all" }
+    },
+    "qubes_os": {
+      "name": "Qubes OS",
+      "family": "independent",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://www.qubes-os.org/doc/", "allowedDomains": ["qubes-os.org"] },
+      "packageManagers": ["qubes-dom0-update"],
+      "commands": { "update": "sudo qubes-dom0-update" }
+    },
+    "freebsd": {
+      "name": "FreeBSD",
+      "family": "bsd",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://docs.freebsd.org/", "allowedDomains": ["freebsd.org"] },
+      "packageManagers": ["pkg"],
+      "commands": { "update": "sudo pkg upgrade" }
+    },
+    "openbsd": {
+      "name": "OpenBSD",
+      "family": "bsd",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://www.openbsd.org/faq/", "allowedDomains": ["openbsd.org"] },
+      "packageManagers": ["pkg_add"],
+      "commands": { "update": "sudo syspatch && sudo pkg_add -u" }
+    },
+    "chromeos": {
+      "name": "ChromeOS",
+      "family": "gentoo",
+      "architectures": ["x86_64", "aarch64"],
+      "documentation": { "rootUrl": "https://support.google.com/chromebook/", "allowedDomains": ["google.com"] },
+      "packageManagers": ["chromebrew"],
+      "commands": { "update": "Automatic" }
+    },
+    "haiku": {
+      "name": "Haiku",
+      "family": "independent",
+      "architectures": ["x86_64"],
+      "documentation": { "rootUrl": "https://www.haiku-os.org/docs/", "allowedDomains": ["haiku-os.org"] },
+      "packageManagers": ["pkgman"],
+      "commands": { "update": "pkgman full-sync" }
+    },
+    "asahi_linux": {
+      "name": "Asahi Linux",
+      "family": "fedora",
+      "architectures": ["aarch64"],
+      "documentation": { "rootUrl": "https://github.com/AsahiLinux/docs/wiki", "allowedDomains": ["github.com", "asahilinux.org"] },
+      "packageManagers": ["dnf"],
+      "commands": { "update": "sudo dnf upgrade" }
+    }
+  }
+}

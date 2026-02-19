@@ -1,0 +1,158 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pennyworth</title>
+    <link rel="icon" type="image/png" href="../../public/pennyworth.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-shape bg-shape-a"></div>
+    <div class="bg-shape bg-shape-b"></div>
+
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <img class="brand-logo" src="../../public/pennyworth.png" alt="Pennyworth logo" />
+          <div>
+            <h1>Pennyworth</h1>
+            <p id="subTitle">Your Linux butler for command-line crises.</p>
+          </div>
+        </div>
+        <div class="runtime-meta">
+          <button id="settingsBtn" type="button">Settings</button>
+          <span id="profileBadge" class="badge"></span>
+          <span id="providerBadge" class="badge badge-alt"></span>
+        </div>
+      </header>
+
+      <section id="chat" class="chat"></section>
+      <section id="tracePanel" class="trace-panel hidden">
+        <div class="trace-header">Tool Trace (Dev Mode)</div>
+        <pre id="traceContent">No tool calls captured yet.</pre>
+      </section>
+
+      <section class="composer">
+        <div class="composer-actions">
+          <select id="profileSelect" disabled title="Auto-detected profile"></select>
+          <button id="captureBtn" type="button">Capture Screen</button>
+          <button id="voiceBtn" type="button">Talk</button>
+        </div>
+
+        <div id="capturePreview" class="capture-preview hidden">
+          <img id="captureImage" alt="Captured context" />
+          <button id="clearCaptureBtn" type="button">Clear</button>
+        </div>
+
+        <textarea id="promptInput" placeholder="Summon command wisdom... (Ctrl+Shift+Space from tray)"></textarea>
+
+        <div class="composer-footer">
+          <div id="status">Ready.</div>
+          <button id="sendBtn" type="button">Summon</button>
+        </div>
+      </section>
+    </main>
+
+    <div id="loader" class="loader hidden">
+      <div class="bat-wave"></div>
+      <p>Pennyworth is investigating...</p>
+    </div>
+
+    <div id="cropModal" class="crop-modal hidden">
+      <div class="crop-panel">
+        <h2>Select a region</h2>
+        <p>Drag to crop. Double-click selection to confirm.</p>
+        <div id="cropCanvasWrap" class="crop-canvas-wrap"></div>
+        <div class="crop-actions">
+          <button id="cancelCropBtn" type="button">Cancel</button>
+          <button id="confirmCropBtn" type="button">Use Full Screenshot</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="settingsModal" class="settings-modal hidden">
+      <div class="settings-panel">
+        <h2>Assistant Settings</h2>
+        <p>Configure distro context and model providers. API keys are stored in OS keychain when available.</p>
+
+        <div class="settings-grid">
+          <label for="detectedProfile">Detected Distro Profile</label>
+          <input id="detectedProfile" type="text" readonly />
+
+          <label for="detectedArch">Detected Architecture</label>
+          <input id="detectedArch" type="text" readonly />
+
+          <label for="detectionReason">Detection Reason</label>
+          <input id="detectionReason" type="text" readonly />
+
+          <label for="docsRootOverride">Docs Root URL Override</label>
+          <input
+            id="docsRootOverride"
+            type="text"
+            placeholder="Leave blank to use profile default documentation URL"
+          />
+
+          <label for="allowIpLocation">Allow IP Location For Weather</label>
+          <input id="allowIpLocation" type="checkbox" />
+
+          <label for="devMode">Enable Developer Trace Panel</label>
+          <input id="devMode" type="checkbox" />
+
+          <label for="defaultProviderSelect">Default Provider</label>
+          <select id="defaultProviderSelect">
+            <option value="ollama">Ollama</option>
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini</option>
+          </select>
+
+          <label for="ollamaEnabled">Enable Ollama</label>
+          <input id="ollamaEnabled" type="checkbox" />
+
+          <label for="ollamaBaseUrl">Ollama Base URL</label>
+          <input id="ollamaBaseUrl" type="text" />
+
+          <label for="ollamaModel">Ollama Model</label>
+          <input id="ollamaModel" type="text" />
+
+          <label for="openaiEnabled">Enable OpenAI</label>
+          <input id="openaiEnabled" type="checkbox" />
+
+          <label for="openaiModel">OpenAI Model</label>
+          <input id="openaiModel" type="text" />
+
+          <label for="openaiApiKey">OpenAI API Key</label>
+          <input id="openaiApiKey" type="password" placeholder="Leave empty to keep current key" />
+
+          <label for="clearOpenAI">Clear OpenAI Key</label>
+          <input id="clearOpenAI" type="checkbox" />
+
+          <label for="geminiEnabled">Enable Gemini</label>
+          <input id="geminiEnabled" type="checkbox" />
+
+          <label for="geminiModel">Gemini Model</label>
+          <input id="geminiModel" type="text" />
+
+          <label for="geminiApiKey">Gemini API Key</label>
+          <input id="geminiApiKey" type="password" placeholder="Leave empty to keep current key" />
+
+          <label for="clearGemini">Clear Gemini Key</label>
+          <input id="clearGemini" type="checkbox" />
+        </div>
+
+        <div class="settings-key-status">
+          <span id="ollamaStatus" class="badge"></span>
+          <span id="openaiKeyStatus" class="badge"></span>
+          <span id="geminiKeyStatus" class="badge"></span>
+        </div>
+
+        <div class="crop-actions">
+          <button id="cancelSettingsBtn" type="button">Cancel</button>
+          <button id="saveSettingsBtn" type="button">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

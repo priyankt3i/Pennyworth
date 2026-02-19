@@ -1,0 +1,71 @@
+{
+  "name": "pennyworth-desktop",
+  "version": "0.1.0",
+  "description": "Pennyworth: Linux-first agentic desktop assistant",
+  "main": "src/main.js",
+  "private": true,
+  "author": "Pennyworth Team",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "crawl:docs": "node scripts/crawl-docs.js",
+    "init:config": "node scripts/init-config.js",
+    "json:normalize": "node scripts/normalize-json.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "axios": "^1.9.0",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.5.0",
+    "electron-store": "^10.1.0",
+    "keytar": "^7.9.0",
+    "screenshot-desktop": "^1.15.2"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.pennyworth.desktop",
+    "productName": "Pennyworth",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "public/**/*",
+      "config/**/*",
+      "data/**/*",
+      "package.json",
+      ".env.example",
+      "README.md"
+    ],
+    "win": {
+      "icon": "public/pennyworth.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "icon": "public/pennyworth.png",
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "category": "Utility"
+    }
+  }
+}

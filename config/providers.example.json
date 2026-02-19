@@ -1,0 +1,20 @@
+{
+  "defaultProvider": "ollama",
+  "providers": {
+    "ollama": {
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:11434",
+      "model": "llama3.2"
+    },
+    "openai": {
+      "enabled": false,
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "model": "gpt-4o-mini"
+    },
+    "gemini": {
+      "enabled": false,
+      "apiKeyEnv": "GEMINI_API_KEY",
+      "model": "gemini-2.0-flash"
+    }
+  }
+}

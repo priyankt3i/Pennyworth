@@ -366,6 +366,8 @@ function createCropCanvas(imageDataUrl) {
       scale,
       selection: null,
       start: null,
+      pointerId: null,
+      rafId: null,
     };
 
     redrawCropCanvas();
@@ -373,18 +375,23 @@ function createCropCanvas(imageDataUrl) {
 
   img.src = imageDataUrl;
 
-  canvas.addEventListener("mousedown", onCropStart);
-  canvas.addEventListener("mousemove", onCropMove);
-  canvas.addEventListener("mouseup", onCropEnd);
+  canvas.style.touchAction = "none";
+  canvas.addEventListener("pointerdown", onCropStart);
   canvas.addEventListener("dblclick", confirmCropSelection);
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
   el.cropCanvasWrap.appendChild(canvas);
 }
 
 function cropPosition(event) {
   const rect = state.crop.canvas.getBoundingClientRect();
-  const x = Math.max(0, Math.min(state.crop.canvas.width, event.clientX - rect.left));
-  const y = Math.max(0, Math.min(state.crop.canvas.height, event.clientY - rect.top));
+  const width = Math.max(1, rect.width);
+  const height = Math.max(1, rect.height);
+  const scaleX = state.crop.canvas.width / width;
+  const scaleY = state.crop.canvas.height / height;
+
+  const x = Math.max(0, Math.min(state.crop.canvas.width, (event.clientX - rect.left) * scaleX));
+  const y = Math.max(0, Math.min(state.crop.canvas.height, (event.clientY - rect.top) * scaleY));
   return { x, y };
 }
 
@@ -392,16 +399,37 @@ function onCropStart(event) {
   if (!state.crop) {
     return;
   }
+  if (event.pointerType === "mouse" && event.button !== 0) {
+    return;
+  }
+
+  event.preventDefault();
   state.drawing = true;
+  state.crop.pointerId = event.pointerId ?? null;
+  if (event.target?.setPointerCapture && state.crop.pointerId !== null) {
+    try {
+      event.target.setPointerCapture(state.crop.pointerId);
+    } catch {
+      // Ignore capture failures and continue best-effort.
+    }
+  }
   state.crop.start = cropPosition(event);
   state.crop.selection = { x: state.crop.start.x, y: state.crop.start.y, w: 0, h: 0 };
   redrawCropCanvas();
+  window.addEventListener("pointermove", onCropMove);
+  window.addEventListener("pointerup", onCropEnd);
+  window.addEventListener("pointercancel", onCropEnd);
 }
 
 function onCropMove(event) {
   if (!state.crop || !state.drawing) {
     return;
   }
+  if (state.crop.pointerId !== null && event.pointerId !== state.crop.pointerId) {
+    return;
+  }
+
+  event.preventDefault();
   const current = cropPosition(event);
   const x = Math.min(state.crop.start.x, current.x);
   const y = Math.min(state.crop.start.y, current.y);
@@ -409,11 +437,55 @@ function onCropMove(event) {
   const h = Math.abs(current.y - state.crop.start.y);
 
   state.crop.selection = { x, y, w, h };
-  redrawCropCanvas();
+  scheduleCropRedraw();
 }
 
-function onCropEnd() {
+function onCropEnd(event) {
+  if (!state.crop) {
+    return;
+  }
+  if (state.crop.pointerId !== null && event?.pointerId !== undefined && event.pointerId !== state.crop.pointerId) {
+    return;
+  }
+
+  if (event?.target?.releasePointerCapture && state.crop.pointerId !== null) {
+    try {
+      event.target.releasePointerCapture(state.crop.pointerId);
+    } catch {
+      // Ignore release failures.
+    }
+  }
   state.drawing = false;
+  state.crop.pointerId = null;
+  window.removeEventListener("pointermove", onCropMove);
+  window.removeEventListener("pointerup", onCropEnd);
+  window.removeEventListener("pointercancel", onCropEnd);
+}
+
+function hasValidCropSelection() {
+  const selection = state.crop?.selection;
+  return Boolean(selection && selection.w >= 2 && selection.h >= 2);
+}
+
+function updateCropConfirmButton() {
+  if (!el.confirmCropBtn) {
+    return;
+  }
+  el.confirmCropBtn.textContent = hasValidCropSelection() ? "Use Selected Region" : "Use Full Screenshot";
+}
+
+function scheduleCropRedraw() {
+  if (!state.crop || state.crop.rafId) {
+    return;
+  }
+
+  state.crop.rafId = window.requestAnimationFrame(() => {
+    if (!state.crop) {
+      return;
+    }
+    state.crop.rafId = null;
+    redrawCropCanvas();
+  });
 }
 
 function redrawCropCanvas() {
@@ -424,6 +496,7 @@ function redrawCropCanvas() {
   const { canvas, ctx, img, selection } = state.crop;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  updateCropConfirmButton();
 
   if (!selection || selection.w < 2 || selection.h < 2) {
     return;
@@ -482,10 +555,17 @@ function confirmCropSelection() {
 }
 
 function closeCropModal() {
+  if (state.crop?.rafId) {
+    window.cancelAnimationFrame(state.crop.rafId);
+  }
+  window.removeEventListener("pointermove", onCropMove);
+  window.removeEventListener("pointerup", onCropEnd);
+  window.removeEventListener("pointercancel", onCropEnd);
   el.cropModal.classList.add("hidden");
   state.crop = null;
   state.drawing = false;
   el.cropCanvasWrap.innerHTML = "";
+  updateCropConfirmButton();
 }
 
 function toDisplayKey(id, fallbackIndex = 0) {
@@ -608,6 +688,10 @@ async function openCaptureModalForCurrentDisplay() {
   el.cropModal.classList.remove("hidden");
 
   el.confirmCropBtn.onclick = () => {
+    if (hasValidCropSelection()) {
+      confirmCropSelection();
+      return;
+    }
     setCapturedImage(dataUrl);
     closeCropModal();
     setStatus(`Attached full screenshot from ${captured.sourceLabel}.`, "ok");

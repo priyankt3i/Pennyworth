@@ -6,13 +6,14 @@ Pennyworth is a cross-platform desktop AI assistant (Electron) designed to feel 
 
 Original goal: build a Batman-style butler for Linux power users (starting with Arch/CachyOS), then expand to broader distro families and eventually support full Windows/macOS/Linux parity with strong auto-detection and minimal manual setup.
 
-Current state: the prototype already runs cross-platform and includes the core agent/tooling loop, but still needs full duplex voice, richer screen/terminal awareness, and guarded action execution to become a true "copilot on steroids."
+Current state: the prototype runs on Windows/macOS/Linux, has provider tool-calling and local-doc retrieval, and now includes frameless desktop UX, screenshot-to-model chat context, and robust failure surfacing. It still needs full duplex voice, deeper terminal/screen understanding, and safe action execution to become a true "copilot on steroids."
 
 ## Current Progress (Implemented)
 
 - Electron desktop shell with:
   - tray icon + double-click summon
   - global shortcut: `Ctrl+Shift+Space`
+  - frameless app window + in-app window controls (minimize/maximize/close-to-tray)
   - settings modal + runtime badges
 - Branding:
   - custom app/taskbar/tray icons from `public/pennyworth.ico` and `public/pennyworth.png`
@@ -23,9 +24,12 @@ Current state: the prototype already runs cross-platform and includes the core a
   - system fingerprint context (kernel, desktop, package-manager presence, etc.)
 - Provider layer:
   - `ollama`, `openai`, `gemini`
+  - single active provider selection in settings (tabbed LLM section)
   - provider failover routing
   - provider health checks in settings
+  - no-provider fallback icon and guided status/help messaging
   - API key entry in settings (saved via `keytar` when available)
+  - Ollama model auto-discovery for dropdown model selection
 - Agentic tool use:
   - `get_current_datetime`
   - `get_weather` via Open-Meteo (with optional IP-location permission)
@@ -36,7 +40,9 @@ Current state: the prototype already runs cross-platform and includes the core a
   - local docs retrieval from `data/docs/<profile>`
   - docs crawler script for pulling distro docs locally
 - UI/UX:
-  - screenshot capture + region selection attachment
+  - screenshot capture with monitor selection + region selection
+  - capture flow hides app before screenshot to avoid self-capture artifacts
+  - screenshot payload is sent with chat requests to compatible providers/models
   - speech-to-text input (browser speech recognition)
   - markdown chat rendering
   - developer trace panel for provider/tool execution visibility
@@ -47,8 +53,9 @@ Current state: the prototype already runs cross-platform and includes the core a
 - Voice is input-only right now (no real two-way voice conversation with TTS playback).
 - Screen context is capture-on-demand, not continuous live screen share.
 - No terminal streaming parser yet (user still pastes errors manually in most flows).
-- RAG is lexical retrieval, not embeddings/vector search yet.
+- RAG is lexical retrieval (keyword scoring), not embeddings/vector search yet.
 - No safe action-execution engine yet (assistant advises; it does not automatically run privileged system actions).
+- Visual reasoning quality depends on selected model/provider capabilities (vision-capable model required for screenshot interpretation).
 
 ## Roadmap Toward "True Copilot"
 
@@ -57,18 +64,19 @@ Current state: the prototype already runs cross-platform and includes the core a
 1. Harden provider/tool error handling and trace visibility.
 2. Add stronger docs ingestion + chunking quality for distro knowledge.
 3. Improve cross-platform packaging reliability and first-run diagnostics.
+4. Add better provider/model readiness checks before chat send.
 
 ### Phase 2: Real Copilot Experience
 
 1. Full voice chat:
-   - push-to-talk + wake-word optional mode
-   - speech-to-text + text-to-speech for conversational loop
+  - push-to-talk + wake-word optional mode
+  - speech-to-text + text-to-speech for conversational loop
 2. Share-screen modes:
-   - one-shot capture (done) plus continuous session share (next)
-   - OCR + UI element detection so Pennyworth can reference on-screen errors directly
+  - one-shot capture (done) plus continuous session share (next)
+  - OCR + UI element detection so Pennyworth can reference on-screen errors directly
 3. Terminal co-pilot mode:
-   - detect shell errors in real time
-   - propose fixes with confidence, risk, and rollback guidance
+  - detect shell errors in real time
+  - propose fixes with confidence, risk, and rollback guidance
 
 ### Phase 3: Safe Agentic Actions
 
@@ -92,7 +100,7 @@ Current state: the prototype already runs cross-platform and includes the core a
 - `src/renderer/*`: UI, chat behavior, settings, trace panel, theme
 - `src/core/providers.js`: provider orchestration + failover + tool-call loops
 - `src/core/tools.js`: tool definitions + execution (`datetime`, `weather`, `web_search`)
-- `src/core/rag.js`: local docs retrieval
+- `src/core/rag.js`: local docs retrieval (lexical prototype)
 - `config/distros.json`: distro profiles, architectures, docs roots
 - `config/providers.json`: provider defaults and enable/disable flags
 - `scripts/crawl-docs.js`: local documentation ingestion helper
@@ -156,3 +164,4 @@ Keys entered in settings are stored via OS keychain integration (`keytar`) when 
 - Building mac artifacts is most reliable on macOS hosts.
 - Building Linux artifacts is most reliable on Linux hosts.
 - Screenshot behavior may vary by desktop/compositor (especially on Wayland).
+- For screenshot-aware answers, choose a vision-capable provider/model.

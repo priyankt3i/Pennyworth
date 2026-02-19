@@ -87,6 +87,38 @@ function toErrorPayload(error, fallbackMessage) {
   };
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeDisplays(displays) {
+  if (!Array.isArray(displays)) {
+    return [];
+  }
+
+  return displays.map((display, index) => ({
+    id: display?.id,
+    name: display?.name || display?.displayName || `Display ${index + 1}`,
+    primary: Boolean(display?.primary),
+  }));
+}
+
+async function listDisplaysSafe() {
+  try {
+    const displays = await screenshot.listDisplays();
+    return normalizeDisplays(displays);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeScreenId(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  return value;
+}
+
 function createIcon() {
   const preferred =
     process.platform === "win32"
@@ -126,12 +158,20 @@ function createWindow() {
     title: "Pennyworth",
     backgroundColor: "#0b1115",
     icon: windowIconPath,
+    frame: false,
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
+
+  mainWindow.setMenuBarVisibility(false);
+  if (typeof mainWindow.removeMenu === "function") {
+    mainWindow.removeMenu();
+  }
 
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   mainWindow.on("close", (event) => {
@@ -154,6 +194,17 @@ function toggleWindow() {
     mainWindow.focus();
     mainWindow.webContents.send("pennyworth:summoned");
   }
+}
+
+function getWindowFromEvent(event) {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (senderWindow && !senderWindow.isDestroyed()) {
+    return senderWindow;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return mainWindow;
+  }
+  return null;
 }
 
 function createTray() {
@@ -213,6 +264,17 @@ function normalizeProviderState(base, override) {
   if (!merged.providers[merged.defaultProvider]) {
     merged.defaultProvider = "ollama";
   }
+
+  const enabledProviders = Object.keys(merged.providers).filter(
+    (providerName) => merged.providers[providerName].enabled
+  );
+  if (!enabledProviders.includes(merged.defaultProvider)) {
+    merged.defaultProvider = enabledProviders[0] || merged.defaultProvider;
+  }
+
+  Object.keys(merged.providers).forEach((providerName) => {
+    merged.providers[providerName].enabled = providerName === merged.defaultProvider;
+  });
 
   return merged;
 }
@@ -326,6 +388,27 @@ function toProviderErrorMessage(error) {
     return String(error.code);
   }
   return error?.message || "Connection failed";
+}
+
+function normalizeOllamaBaseUrl(baseUrl) {
+  const raw = String(baseUrl || "http://127.0.0.1:11434").trim();
+  return raw.replace(/\/+$/, "");
+}
+
+async function listOllamaModels(baseUrl) {
+  const normalizedBaseUrl = normalizeOllamaBaseUrl(baseUrl);
+  const response = await axios.get(`${normalizedBaseUrl}/api/tags`, { timeout: 5000 });
+  const models = Array.isArray(response?.data?.models) ? response.data.models : [];
+
+  const names = Array.from(
+    new Set(
+      models
+        .map((model) => String(model?.name || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  return names;
 }
 
 async function checkOllamaHealth(config) {
@@ -596,6 +679,58 @@ ipcMain.handle("pennyworth:get-runtime-config", async () => {
   }
 });
 
+ipcMain.handle("pennyworth:window-minimize", async (event) => {
+  try {
+    const win = getWindowFromEvent(event);
+    if (!win) {
+      throw new Error("Window is not available.");
+    }
+    win.minimize();
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: toErrorPayload(error, "Failed to minimize window."),
+    };
+  }
+});
+
+ipcMain.handle("pennyworth:window-maximize-toggle", async (event) => {
+  try {
+    const win = getWindowFromEvent(event);
+    if (!win) {
+      throw new Error("Window is not available.");
+    }
+    if (win.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win.maximize();
+    }
+    return { ok: true, maximized: win.isMaximized() };
+  } catch (error) {
+    return {
+      ok: false,
+      error: toErrorPayload(error, "Failed to change window size."),
+    };
+  }
+});
+
+ipcMain.handle("pennyworth:window-close", async (event) => {
+  try {
+    const win = getWindowFromEvent(event);
+    if (!win) {
+      throw new Error("Window is not available.");
+    }
+    win.hide();
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: toErrorPayload(error, "Failed to close window."),
+    };
+  }
+});
+
 ipcMain.handle("pennyworth:set-profile", async (_event, profileId) => {
   return {
     ok: false,
@@ -643,6 +778,22 @@ ipcMain.handle("pennyworth:get-provider-health", async () => {
     };
   }
 });
+
+ipcMain.handle("pennyworth:list-ollama-models", async (_event, payload) => {
+  try {
+    const names = await listOllamaModels(payload?.baseUrl);
+    return {
+      ok: true,
+      models: names,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: toErrorPayload(error, "Failed to load Ollama models."),
+    };
+  }
+});
+
 ipcMain.handle("pennyworth:save-settings", async (_event, payload) => {
   try {
     const body = payload || {};
@@ -720,23 +871,74 @@ ipcMain.handle("pennyworth:get-system-context", async () => {
   }
 });
 
-ipcMain.handle("pennyworth:capture-screen", async () => {
+ipcMain.handle("pennyworth:list-displays", async () => {
   try {
-    const image = await screenshot({ format: "png" });
+    const displays = await listDisplaysSafe();
+    return {
+      ok: true,
+      displays,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: toErrorPayload(error, "Failed to detect displays."),
+    };
+  }
+});
+
+ipcMain.handle("pennyworth:capture-screen", async (_event, payload) => {
+  const requestedScreenId = normalizeScreenId(payload?.screenId);
+  const wasVisible = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible());
+
+  try {
+    const displays = await listDisplaysSafe();
+    const selectedDisplay = displays.find((display) => String(display.id) === String(requestedScreenId));
+
+    if (wasVisible) {
+      mainWindow.hide();
+      await wait(220);
+    }
+
+    const captureOptions = { format: "png" };
+    if (requestedScreenId !== null) {
+      captureOptions.screen = requestedScreenId;
+    }
+
+    let image;
+    let warning = null;
+    try {
+      image = await screenshot(captureOptions);
+    } catch (error) {
+      if (requestedScreenId !== null) {
+        image = await screenshot({ format: "png" });
+        warning = `Display-specific capture failed for '${requestedScreenId}'. Captured default display instead.`;
+      } else {
+        throw error;
+      }
+    }
+
     return {
       ok: true,
       imageDataUrl: `data:image/png;base64,${image.toString("base64")}`,
+      screenId: selectedDisplay?.id ?? requestedScreenId,
+      screenName: selectedDisplay?.name || null,
+      warning,
     };
   } catch (error) {
     return {
       ok: false,
       error: toErrorPayload(error, "Failed to capture screenshot."),
     };
+  } finally {
+    if (wasVisible && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
   }
 });
 
 ipcMain.handle("pennyworth:ask", async (_event, payload) => {
-  const { question, history = [], screenshotAttached = false } = payload || {};
+  const { question, history = [], screenshotAttached = false, screenshotData = null } = payload || {};
   if (!question || !question.trim()) {
     return {
       ok: false,
@@ -756,6 +958,7 @@ ipcMain.handle("pennyworth:ask", async (_event, payload) => {
       userPrompt: question,
       history,
       screenshotAttached,
+      screenshotData,
       systemContext: state.contextWithOverrides.systemContext,
       agentContext: state.agentContext,
       distroProfile: state.contextWithOverrides.profile,
@@ -779,6 +982,7 @@ ipcMain.handle("pennyworth:ask", async (_event, payload) => {
 });
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   if (process.platform === "win32") {
     app.setAppUserModelId("com.pennyworth.desktop");
   }

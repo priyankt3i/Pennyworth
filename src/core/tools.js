@@ -184,6 +184,36 @@ function isWebSearchIntent(question) {
   return false;
 }
 
+function runSmallTalkTool(question) {
+  const text = String(question || "").trim().toLowerCase();
+
+  if (/^(thanks|thank you|thx)[!. ]*$/i.test(text)) {
+    return {
+      handled: true,
+      tool: "small_talk",
+      reply: "Always a pleasure. Summon me whenever you need backup.",
+    };
+  }
+
+  if (/^how are you(?: doing)?[?.! ]*$/i.test(text)) {
+    return {
+      handled: true,
+      tool: "small_talk",
+      reply: "Running sharp and ready. What should we tackle next?",
+    };
+  }
+
+  if (/^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)[!. ]*$/i.test(text)) {
+    return {
+      handled: true,
+      tool: "small_talk",
+      reply: "Good day. Pennyworth at your service. What can I help you solve?",
+    };
+  }
+
+  return { handled: false };
+}
+
 function extractLocation(question) {
   const text = question || "";
   const match = text.match(/\b(?:in|at|for)\s+([a-zA-Z][a-zA-Z\s,.-]{1,60})/i);
@@ -451,6 +481,10 @@ async function executeToolFunction(name, args, runtimeContext) {
 
 async function runAgentTooling({ question, systemContext, agentContext }) {
   const text = String(question || "");
+  const smallTalk = runSmallTalkTool(text);
+  if (smallTalk.handled) {
+    return smallTalk;
+  }
 
   if (isWeatherIntent(text)) {
     try {

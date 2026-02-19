@@ -37,6 +37,37 @@ function readOsRelease() {
   }
 }
 
+function inferWindowsFamilyFromRelease(release) {
+  const value = String(release || "");
+  const parts = value.split(".");
+  const build = Number(parts[2] || parts[parts.length - 1]);
+
+  if (Number.isFinite(build) && build >= 22000) {
+    return "Windows 11";
+  }
+  return "Windows 10";
+}
+
+function resolveWindowsInfo() {
+  const release = os.release();
+  const captionRaw = tryExec("powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).Caption\"");
+  const versionRaw = tryExec("powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).Version\"");
+
+  const caption =
+    captionRaw !== "unknown"
+      ? captionRaw.replace(/^Microsoft\s+/i, "").trim()
+      : inferWindowsFamilyFromRelease(release);
+
+  const version = versionRaw !== "unknown" ? versionRaw : release;
+  const prettyName = caption.includes(version) ? caption : `${caption} ${version}`;
+
+  return {
+    name: caption,
+    prettyName,
+    versionId: version,
+  };
+}
+
 function resolveDistro(osRelease, platform) {
   if (platform === "linux") {
     const idLike = String(osRelease.ID_LIKE || "")
@@ -53,11 +84,12 @@ function resolveDistro(osRelease, platform) {
   }
 
   if (platform === "win32") {
+    const windowsInfo = resolveWindowsInfo();
     return {
       id: "windows",
-      name: "Windows",
-      prettyName: `Windows ${os.release()}`,
-      versionId: os.release(),
+      name: windowsInfo.name,
+      prettyName: windowsInfo.prettyName,
+      versionId: windowsInfo.versionId,
       idLike: [],
     };
   }

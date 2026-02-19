@@ -20,10 +20,18 @@
             <p id="subTitle">Your Linux butler for command-line crises.</p>
           </div>
         </div>
-        <div class="runtime-meta">
-          <button id="settingsBtn" type="button">Settings</button>
-          <span id="profileBadge" class="badge"></span>
-          <span id="providerBadge" class="badge badge-alt"></span>
+        <div class="runtime-meta no-drag">
+          <button id="settingsBtn" type="button" aria-label="Settings">
+            <img class="settings-icon" src="../../public/settings.png" alt="" />
+          </button>
+          <button id="providerBadge" type="button" aria-label="Provider">
+            <img id="providerBadgeIcon" class="provider-icon" src="../../public/ollama.png" alt="" />
+          </button>
+          <div class="window-controls">
+            <button id="windowMinBtn" type="button" aria-label="Minimize">-</button>
+            <button id="windowMaxBtn" type="button" aria-label="Maximize or Restore">[]</button>
+            <button id="windowCloseBtn" type="button" aria-label="Close to tray">x</button>
+          </div>
         </div>
       </header>
 
@@ -63,6 +71,10 @@
       <div class="crop-panel">
         <h2>Select a region</h2>
         <p>Drag to crop. Double-click selection to confirm.</p>
+        <div id="displaySelectorWrap" class="display-selector hidden">
+          <label for="displaySelect">Monitor</label>
+          <select id="displaySelect"></select>
+        </div>
         <div id="cropCanvasWrap" class="crop-canvas-wrap"></div>
         <div class="crop-actions">
           <button id="cancelCropBtn" type="button">Cancel</button>
@@ -76,69 +88,81 @@
         <h2>Assistant Settings</h2>
         <p>Configure distro context and model providers. API keys are stored in OS keychain when available.</p>
 
-        <div class="settings-grid">
-          <label for="detectedProfile">Detected Distro Profile</label>
-          <input id="detectedProfile" type="text" readonly />
+        <section class="settings-section">
+          <h3>System Context</h3>
+          <div class="settings-grid">
+            <label for="detectedProfile">Detected Distro Profile</label>
+            <input id="detectedProfile" type="text" readonly />
 
-          <label for="detectedArch">Detected Architecture</label>
-          <input id="detectedArch" type="text" readonly />
+            <label for="detectedArch">Detected Architecture</label>
+            <input id="detectedArch" type="text" readonly />
 
-          <label for="detectionReason">Detection Reason</label>
-          <input id="detectionReason" type="text" readonly />
+            <label for="detectionReason">Detection Reason</label>
+            <input id="detectionReason" type="text" readonly />
 
-          <label for="docsRootOverride">Docs Root URL Override</label>
-          <input
-            id="docsRootOverride"
-            type="text"
-            placeholder="Leave blank to use profile default documentation URL"
-          />
+            <label for="docsRootOverride">Docs Root URL Override</label>
+            <input
+              id="docsRootOverride"
+              type="text"
+              placeholder="Leave blank to use profile default documentation URL"
+            />
 
-          <label for="allowIpLocation">Allow IP Location For Weather</label>
-          <input id="allowIpLocation" type="checkbox" />
+            <label for="allowIpLocation">Allow IP Location For Weather</label>
+            <input id="allowIpLocation" type="checkbox" />
 
-          <label for="devMode">Enable Developer Trace Panel</label>
-          <input id="devMode" type="checkbox" />
+            <label for="devMode">Enable Developer Trace Panel</label>
+            <input id="devMode" type="checkbox" />
+          </div>
+        </section>
 
-          <label for="defaultProviderSelect">Default Provider</label>
-          <select id="defaultProviderSelect">
-            <option value="ollama">Ollama</option>
-            <option value="openai">OpenAI</option>
-            <option value="gemini">Gemini</option>
-          </select>
+        <section class="settings-section llm-section">
+          <h3>LLM Provider</h3>
+          <div class="llm-tabs">
+            <button id="llmTabOllama" class="llm-tab" type="button" data-provider="ollama">Ollama</button>
+            <button id="llmTabGemini" class="llm-tab" type="button" data-provider="gemini">Gemini</button>
+            <button id="llmTabOpenAI" class="llm-tab" type="button" data-provider="openai">OpenAI</button>
+          </div>
 
-          <label for="ollamaEnabled">Enable Ollama</label>
-          <input id="ollamaEnabled" type="checkbox" />
+          <div id="llmPanelOllama" class="llm-panel">
+            <div class="provider-grid">
+              <label for="ollamaBaseUrl">Ollama Base URL</label>
+              <input id="ollamaBaseUrl" type="text" />
 
-          <label for="ollamaBaseUrl">Ollama Base URL</label>
-          <input id="ollamaBaseUrl" type="text" />
+              <label for="ollamaModel">Ollama Model</label>
+              <select id="ollamaModel"></select>
+            </div>
+          </div>
 
-          <label for="ollamaModel">Ollama Model</label>
-          <input id="ollamaModel" type="text" />
+          <div id="llmPanelOpenAI" class="llm-panel hidden">
+            <div class="provider-grid">
+              <label for="openaiModel">OpenAI Model</label>
+              <input id="openaiModel" type="text" />
 
-          <label for="openaiEnabled">Enable OpenAI</label>
-          <input id="openaiEnabled" type="checkbox" />
+              <label for="openaiApiKey">OpenAI API Key</label>
+              <div class="api-key-wrap">
+                <input id="openaiApiKey" type="password" placeholder="Leave empty to keep current key" />
+                <button id="clearOpenAIBtn" class="clear-key-btn" type="button" aria-label="Clear OpenAI API key">
+                  X
+                </button>
+              </div>
+            </div>
+          </div>
 
-          <label for="openaiModel">OpenAI Model</label>
-          <input id="openaiModel" type="text" />
+          <div id="llmPanelGemini" class="llm-panel hidden">
+            <div class="provider-grid">
+              <label for="geminiModel">Gemini Model</label>
+              <input id="geminiModel" type="text" />
 
-          <label for="openaiApiKey">OpenAI API Key</label>
-          <input id="openaiApiKey" type="password" placeholder="Leave empty to keep current key" />
-
-          <label for="clearOpenAI">Clear OpenAI Key</label>
-          <input id="clearOpenAI" type="checkbox" />
-
-          <label for="geminiEnabled">Enable Gemini</label>
-          <input id="geminiEnabled" type="checkbox" />
-
-          <label for="geminiModel">Gemini Model</label>
-          <input id="geminiModel" type="text" />
-
-          <label for="geminiApiKey">Gemini API Key</label>
-          <input id="geminiApiKey" type="password" placeholder="Leave empty to keep current key" />
-
-          <label for="clearGemini">Clear Gemini Key</label>
-          <input id="clearGemini" type="checkbox" />
-        </div>
+              <label for="geminiApiKey">Gemini API Key</label>
+              <div class="api-key-wrap">
+                <input id="geminiApiKey" type="password" placeholder="Leave empty to keep current key" />
+                <button id="clearGeminiBtn" class="clear-key-btn" type="button" aria-label="Clear Gemini API key">
+                  X
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
 
         <div class="settings-key-status">
           <span id="ollamaStatus" class="badge"></span>

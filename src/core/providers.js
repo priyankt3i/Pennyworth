@@ -11,11 +11,13 @@ const {
 function buildSystemPrompt(context) {
   const { systemContext, distroProfile, retrievedDocs } = context;
   return [
-    "You are Pennyworth, a precise Linux expert assistant inspired by Alfred Pennyworth.",
+    "You are Pennyworth, a precise expert assistant designed for windows linux and macOS. You are inspired by Alfred Pennyworth.",
     "Style: concise, technical, witty but never verbose.",
+    "Handle greetings and small talk naturally. Never refuse basic conversation.",
     "You must prefer distro-correct commands and explain command risk when root access is needed.",
     "If uncertain, state assumptions and provide verification steps.",
     "When available, use tools for live web search, date/time, and weather rather than guessing.",
+    "For current events or factual uncertainty, prefer web search before finalizing an answer.",
     "Current system context:",
     JSON.stringify(systemContext, null, 2),
     "Configured distro profile:",
@@ -25,17 +27,129 @@ function buildSystemPrompt(context) {
   ].join("\n\n");
 }
 
-function buildMessages(context) {
-  const { userPrompt, history = [], screenshotAttached } = context;
-  const userContent = screenshotAttached
-    ? `${userPrompt}\n\n[User attached a screenshot region. If visual context is not available, ask follow-up questions.]`
-    : userPrompt;
+function parseImageDataUrl(dataUrl) {
+  const value = String(dataUrl || "").trim();
+  const match = /^data:([^;,]+);base64,([\s\S]+)$/i.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const mimeType = String(match[1] || "").trim().toLowerCase();
+  const base64 = String(match[2] || "").replace(/\s+/g, "");
+  if (!mimeType || !base64) {
+    return null;
+  }
+
+  return {
+    mimeType,
+    base64,
+    dataUrl: value,
+  };
+}
+
+function buildUserTextWithImageFallback(userPrompt, screenshotAttached, hasImagePayload) {
+  if (screenshotAttached && !hasImagePayload) {
+    return `${userPrompt}\n\n[User attached a screenshot region, but image data was unavailable. Ask follow-up questions if visual context is required.]`;
+  }
+  return userPrompt;
+}
+
+function normalizeHistory(history = []) {
+  return history
+    .slice(-8)
+    .filter((msg) => msg && typeof msg === "object")
+    .map((msg) => ({
+      role: msg.role,
+      content: String(msg.content || ""),
+    }))
+    .filter((msg) => msg.role === "user" || msg.role === "assistant");
+}
+
+function buildOllamaMessages(context) {
+  const imagePayload = parseImageDataUrl(context.screenshotData);
+  const userText = buildUserTextWithImageFallback(
+    context.userPrompt,
+    context.screenshotAttached,
+    Boolean(imagePayload)
+  );
+
+  const userMessage = {
+    role: "user",
+    content: userText,
+  };
+
+  if (imagePayload) {
+    userMessage.images = [imagePayload.base64];
+  }
 
   return [
     { role: "system", content: buildSystemPrompt(context) },
-    ...history.slice(-8),
-    { role: "user", content: userContent },
+    ...normalizeHistory(context.history),
+    userMessage,
   ];
+}
+
+function buildOpenAIMessages(context) {
+  const imagePayload = parseImageDataUrl(context.screenshotData);
+  const userText = buildUserTextWithImageFallback(
+    context.userPrompt,
+    context.screenshotAttached,
+    Boolean(imagePayload)
+  );
+
+  const userMessage = imagePayload
+    ? {
+        role: "user",
+        content: [
+          { type: "text", text: userText },
+          { type: "image_url", image_url: { url: imagePayload.dataUrl } },
+        ],
+      }
+    : {
+        role: "user",
+        content: userText,
+      };
+
+  return [
+    { role: "system", content: buildSystemPrompt(context) },
+    ...normalizeHistory(context.history),
+    userMessage,
+  ];
+}
+
+function buildGeminiContents(context) {
+  const imagePayload = parseImageDataUrl(context.screenshotData);
+  const userText = buildUserTextWithImageFallback(
+    context.userPrompt,
+    context.screenshotAttached,
+    Boolean(imagePayload)
+  );
+
+  const contents = [];
+  for (const msg of normalizeHistory(context.history)) {
+    const role = msg.role === "assistant" ? "model" : "user";
+    contents.push({
+      role,
+      parts: [{ text: String(msg.content || "") }],
+    });
+  }
+
+  const userParts = [{ text: userText }];
+  if (imagePayload) {
+    userParts.push({
+      inlineData: {
+        mimeType: imagePayload.mimeType,
+        data: imagePayload.base64,
+      },
+    });
+  }
+
+  contents.push({
+    role: "user",
+    parts: userParts,
+  });
+
+  return contents;
 }
 
 function safeJsonParse(value) {
@@ -70,6 +184,38 @@ function pushTrace(context, event) {
     at: new Date().toISOString(),
     ...event,
   });
+}
+
+function isSmallTalkPrompt(prompt) {
+  const text = String(prompt || "").trim().toLowerCase();
+  return /^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening|thanks|thank you|thx|how are you(?: doing)?)\b/.test(
+    text
+  );
+}
+
+function shouldAutoWebSearchFromReply(userPrompt, reply) {
+  const prompt = String(userPrompt || "").trim();
+  const answer = String(reply || "").trim();
+
+  if (!prompt || !answer || isSmallTalkPrompt(prompt)) {
+    return false;
+  }
+
+  const asksQuestion = /\?|^(who|what|when|where|why|how|which)\b/i.test(prompt);
+  if (!asksQuestion) {
+    return false;
+  }
+
+  const uncertainPatterns = [
+    /\bnot applicable\b/i,
+    /\b(?:do not|don't)\s+know\b/i,
+    /\bnot sure\b/i,
+    /\b(?:cannot|can't|unable to)\b/i,
+    /\bno (?:internet|web|live data|access)\b/i,
+    /\bas an ai\b/i,
+  ];
+
+  return uncertainPatterns.some((pattern) => pattern.test(answer));
 }
 
 async function runToolAndFormat(name, args, context, providerName) {
@@ -125,13 +271,54 @@ async function askOllama(config, context) {
 
   const baseUrl = config.baseUrl || "http://127.0.0.1:11434";
   const model = config.model || process.env.OLLAMA_MODEL || "llama3.2";
+  const messages = buildOllamaMessages(context);
   const response = await axios.post(`${baseUrl}/api/chat`, {
     model,
-    messages: buildMessages(context),
+    messages,
     stream: false,
   });
 
-  const reply = response?.data?.message?.content || "Ollama returned an empty response.";
+  let reply = response?.data?.message?.content || "Ollama returned an empty response.";
+
+  if (shouldAutoWebSearchFromReply(context.userPrompt, reply)) {
+    pushTrace(context, {
+      stage: "ollama_auto_web_search_trigger",
+      provider: "ollama",
+      reason: "model_uncertain_reply",
+      firstReply: compactValue(reply, 500),
+    });
+
+    const webLookup = await runToolAndFormat(
+      "web_search",
+      { query: context.userPrompt },
+      context,
+      "ollama"
+    );
+
+    const synthesisPrompt = [
+      "Your first answer was uncertain. Use the web lookup below to answer the user.",
+      "If results are weak or conflicting, say that clearly.",
+      "Prefer concise, direct guidance.",
+      "Web lookup:",
+      webLookup,
+    ].join("\n\n");
+
+    const synthesis = await axios.post(`${baseUrl}/api/chat`, {
+      model,
+      messages: [
+        ...messages,
+        { role: "assistant", content: reply },
+        { role: "user", content: synthesisPrompt },
+      ],
+      stream: false,
+    });
+
+    const upgradedReply = synthesis?.data?.message?.content?.trim();
+    if (upgradedReply) {
+      reply = upgradedReply;
+    }
+  }
+
   pushTrace(context, {
     stage: "final_response",
     provider: "ollama",
@@ -147,7 +334,7 @@ async function askOpenAI(config, context) {
   }
 
   const model = config.model || process.env.OPENAI_MODEL || "gpt-4o-mini";
-  const messages = buildMessages(context);
+  const messages = buildOpenAIMessages(context);
   const tools = getOpenAIToolDefinitions();
 
   for (let step = 0; step < 4; step += 1) {
@@ -213,26 +400,6 @@ async function askOpenAI(config, context) {
   throw new Error("OpenAI tool-calling loop exceeded maximum steps.");
 }
 
-function toGeminiContents(messages) {
-  const output = [];
-  for (const msg of messages) {
-    if (msg.role === "system") {
-      continue;
-    }
-
-    if (msg.role === "assistant") {
-      output.push({ role: "model", parts: [{ text: msg.content || "" }] });
-      continue;
-    }
-
-    if (msg.role === "user") {
-      output.push({ role: "user", parts: [{ text: msg.content || "" }] });
-      continue;
-    }
-  }
-  return output;
-}
-
 function extractGeminiText(candidate) {
   const parts = candidate?.content?.parts || [];
   return parts
@@ -256,8 +423,7 @@ async function askGemini(config, context) {
   const model = config.model || process.env.GEMINI_MODEL || "gemini-2.0-flash";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-  const baseMessages = buildMessages(context);
-  const contents = toGeminiContents(baseMessages);
+  const contents = buildGeminiContents(context);
   const systemInstruction = {
     parts: [{ text: buildSystemPrompt(context) }],
   };

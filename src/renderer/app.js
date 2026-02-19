@@ -7,12 +7,20 @@
   drawing: false,
   crop: null,
   settings: null,
+  captureDisplays: [],
+  selectedDisplayKey: "",
+  activeProviderTab: "ollama",
+  clearApiKeys: {
+    openai: false,
+    gemini: false,
+  },
+  providerHealth: null,
 };
 
 const el = {
   chat: document.getElementById("chat"),
-  profileBadge: document.getElementById("profileBadge"),
   providerBadge: document.getElementById("providerBadge"),
+  providerBadgeIcon: document.getElementById("providerBadgeIcon"),
   profileSelect: document.getElementById("profileSelect"),
   tracePanel: document.getElementById("tracePanel"),
   traceContent: document.getElementById("traceContent"),
@@ -26,11 +34,16 @@ const el = {
   captureImage: document.getElementById("captureImage"),
   clearCaptureBtn: document.getElementById("clearCaptureBtn"),
   cropModal: document.getElementById("cropModal"),
+  displaySelectorWrap: document.getElementById("displaySelectorWrap"),
+  displaySelect: document.getElementById("displaySelect"),
   cropCanvasWrap: document.getElementById("cropCanvasWrap"),
   cancelCropBtn: document.getElementById("cancelCropBtn"),
   confirmCropBtn: document.getElementById("confirmCropBtn"),
   subTitle: document.getElementById("subTitle"),
   settingsBtn: document.getElementById("settingsBtn"),
+  windowMinBtn: document.getElementById("windowMinBtn"),
+  windowMaxBtn: document.getElementById("windowMaxBtn"),
+  windowCloseBtn: document.getElementById("windowCloseBtn"),
   settingsModal: document.getElementById("settingsModal"),
   detectedProfile: document.getElementById("detectedProfile"),
   detectedArch: document.getElementById("detectedArch"),
@@ -38,18 +51,20 @@ const el = {
   docsRootOverride: document.getElementById("docsRootOverride"),
   allowIpLocation: document.getElementById("allowIpLocation"),
   devMode: document.getElementById("devMode"),
-  defaultProviderSelect: document.getElementById("defaultProviderSelect"),
-  ollamaEnabled: document.getElementById("ollamaEnabled"),
+  llmTabOllama: document.getElementById("llmTabOllama"),
+  llmTabOpenAI: document.getElementById("llmTabOpenAI"),
+  llmTabGemini: document.getElementById("llmTabGemini"),
+  llmPanelOllama: document.getElementById("llmPanelOllama"),
+  llmPanelOpenAI: document.getElementById("llmPanelOpenAI"),
+  llmPanelGemini: document.getElementById("llmPanelGemini"),
   ollamaBaseUrl: document.getElementById("ollamaBaseUrl"),
   ollamaModel: document.getElementById("ollamaModel"),
-  openaiEnabled: document.getElementById("openaiEnabled"),
   openaiModel: document.getElementById("openaiModel"),
   openaiApiKey: document.getElementById("openaiApiKey"),
-  clearOpenAI: document.getElementById("clearOpenAI"),
-  geminiEnabled: document.getElementById("geminiEnabled"),
+  clearOpenAIBtn: document.getElementById("clearOpenAIBtn"),
   geminiModel: document.getElementById("geminiModel"),
   geminiApiKey: document.getElementById("geminiApiKey"),
-  clearGemini: document.getElementById("clearGemini"),
+  clearGeminiBtn: document.getElementById("clearGeminiBtn"),
   ollamaStatus: document.getElementById("ollamaStatus"),
   openaiKeyStatus: document.getElementById("openaiKeyStatus"),
   geminiKeyStatus: document.getElementById("geminiKeyStatus"),
@@ -170,19 +185,66 @@ function renderProfileSelect() {
 }
 
 function updateBadges(providerLabel = null) {
-  const profile = state.runtime.profile;
-  if (state.system.platform === "linux") {
-    el.profileBadge.textContent = `${profile.name} | ${state.system.arch}`;
-  } else {
-    const host = state.system.distro?.name || state.system.platform;
-    el.profileBadge.textContent = `Host: ${host} | Target: ${profile.name}`;
-  }
-
-  if (providerLabel) {
-    el.providerBadge.textContent = `provider: ${providerLabel}`;
+  if (!el.providerBadge || !el.providerBadgeIcon) {
     return;
   }
-  el.providerBadge.textContent = `default: ${state.runtime.providers.defaultProvider}`;
+
+  const activeProvider = String(
+    providerLabel || state.runtime?.providers?.defaultProvider || "ollama"
+  ).toLowerCase();
+
+  const iconByProvider = {
+    ollama: "../../public/ollama.png",
+    openai: "../../public/openai.png",
+    gemini: "../../public/gemini.png",
+    noprovider: "../../public/noprovider.png",
+  };
+
+  const normalizedProvider = iconByProvider[activeProvider] ? activeProvider : "noprovider";
+  const iconPath = iconByProvider[normalizedProvider];
+  el.providerBadgeIcon.src = iconPath;
+  el.providerBadgeIcon.alt = `${normalizedProvider} icon`;
+  const label =
+    normalizedProvider === "noprovider" ? "No provider available" : `Provider: ${normalizedProvider}`;
+  el.providerBadge.title = label;
+  el.providerBadge.setAttribute("aria-label", label);
+}
+
+function activeProviderName() {
+  return String(state.runtime?.providers?.defaultProvider || "").trim().toLowerCase();
+}
+
+function isProviderConnected(healthEntry) {
+  return String(healthEntry?.state || "").toLowerCase() === "connected";
+}
+
+function showNoProviderGuidance(showInChat = false, detail = "") {
+  const active = activeProviderName() || "none";
+  const reason = detail ? ` Reason: ${detail}.` : "";
+  const helpText = `No active provider is available (selected: ${active}). Open Settings, choose an LLM tab, and ensure it is connected.${reason}`;
+  updateBadges("noprovider");
+  setStatus(helpText, "error");
+  if (showInChat) {
+    appendMessage("assistant", helpText, "System");
+  }
+}
+
+function applyProviderAvailabilityUi(health = {}, showInChat = false) {
+  const active = activeProviderName();
+  if (!active) {
+    showNoProviderGuidance(showInChat);
+    return false;
+  }
+
+  const activeHealth = health?.[active];
+  if (isProviderConnected(activeHealth)) {
+    updateBadges(active);
+    return true;
+  }
+
+  const reason = activeHealth?.message || activeHealth?.state || "not connected";
+  showNoProviderGuidance(showInChat, reason);
+  return false;
 }
 
 function isDevModeEnabled() {
@@ -426,6 +488,138 @@ function closeCropModal() {
   el.cropCanvasWrap.innerHTML = "";
 }
 
+function toDisplayKey(id, fallbackIndex = 0) {
+  if (id === null || id === undefined || id === "") {
+    return `display-${fallbackIndex}`;
+  }
+  return String(id);
+}
+
+function normalizeDisplayList(displays) {
+  if (!Array.isArray(displays) || !displays.length) {
+    return [];
+  }
+
+  return displays.map((display, index) => {
+    const key = toDisplayKey(display.id, index);
+    const label = display.name || `Display ${index + 1}`;
+    return {
+      key,
+      id: display.id,
+      label: display.primary ? `${label} (Primary)` : label,
+      primary: Boolean(display.primary),
+    };
+  });
+}
+
+function getSelectedDisplay() {
+  if (!state.captureDisplays.length) {
+    return null;
+  }
+
+  return (
+    state.captureDisplays.find((display) => display.key === state.selectedDisplayKey) ||
+    state.captureDisplays[0]
+  );
+}
+
+function renderDisplaySelector() {
+  if (!el.displaySelectorWrap || !el.displaySelect) {
+    return;
+  }
+
+  const displays = state.captureDisplays;
+  const show = displays.length > 1;
+  el.displaySelectorWrap.classList.toggle("hidden", !show);
+
+  if (!show) {
+    el.displaySelect.innerHTML = "";
+    return;
+  }
+
+  el.displaySelect.innerHTML = "";
+  for (const display of displays) {
+    const option = document.createElement("option");
+    option.value = display.key;
+    option.textContent = display.label;
+    el.displaySelect.appendChild(option);
+  }
+
+  const selected = getSelectedDisplay();
+  if (selected) {
+    el.displaySelect.value = selected.key;
+  }
+}
+
+async function refreshCaptureDisplays() {
+  try {
+    const response = await window.pennyworth.listDisplays();
+    if (!response?.ok) {
+      throw new Error(extractErrorText(response?.error, "Display detection failed."));
+    }
+
+    const displays = normalizeDisplayList(response.displays || []);
+    state.captureDisplays = displays;
+
+    if (!displays.length) {
+      state.selectedDisplayKey = "";
+      renderDisplaySelector();
+      return;
+    }
+
+    const selected = displays.find((display) => display.key === state.selectedDisplayKey);
+    state.selectedDisplayKey = selected ? selected.key : displays[0].key;
+    renderDisplaySelector();
+  } catch (error) {
+    state.captureDisplays = [];
+    state.selectedDisplayKey = "";
+    renderDisplaySelector();
+    setStatus(`Display detection issue: ${extractErrorText(error)}. Using default capture mode.`, "error");
+  }
+}
+
+async function captureCurrentDisplayImage() {
+  const selected = getSelectedDisplay();
+  const payload = {};
+  if (selected && selected.id !== null && selected.id !== undefined && selected.id !== "") {
+    payload.screenId = selected.id;
+  }
+
+  const captureResult = assertOk(
+    await window.pennyworth.captureScreen(payload),
+    "Screenshot capture failed."
+  );
+
+  if (captureResult.warning) {
+    appendMessage("assistant", captureResult.warning, "System");
+  }
+
+  return {
+    imageDataUrl: captureResult.imageDataUrl,
+    sourceLabel: captureResult.screenName || selected?.label || "default display",
+  };
+}
+
+async function openCaptureModalForCurrentDisplay() {
+  const captured = await captureCurrentDisplayImage();
+  const dataUrl = captured.imageDataUrl;
+
+  createCropCanvas(dataUrl);
+  el.cropModal.classList.remove("hidden");
+
+  el.confirmCropBtn.onclick = () => {
+    setCapturedImage(dataUrl);
+    closeCropModal();
+    setStatus(`Attached full screenshot from ${captured.sourceLabel}.`, "ok");
+  };
+
+  if (state.captureDisplays.length > 1) {
+    setStatus(`Captured ${captured.sourceLabel}. Change monitor if needed.`, "ok");
+  } else {
+    setStatus("Choose a region or keep full screenshot.");
+  }
+}
+
 function setProviderStatusChip(node, label, health) {
   if (!node) {
     return;
@@ -467,6 +661,137 @@ function setProviderStatusChip(node, label, health) {
   node.classList.add("status-fail");
 }
 
+function getCurrentOllamaModelValue(fallback = "llama3.2") {
+  const current = String(el.ollamaModel?.value || "").trim();
+  if (current) {
+    return current;
+  }
+  return String(fallback || "llama3.2").trim() || "llama3.2";
+}
+
+function setOllamaModelOptions(models, preferredModel) {
+  if (!el.ollamaModel) {
+    return;
+  }
+
+  const safePreferred = getCurrentOllamaModelValue(preferredModel);
+  const uniqueModels = Array.from(
+    new Set((Array.isArray(models) ? models : []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+
+  el.ollamaModel.innerHTML = "";
+
+  if (!uniqueModels.length) {
+    const fallback = document.createElement("option");
+    fallback.value = safePreferred;
+    fallback.textContent = `${safePreferred} (configured)`;
+    el.ollamaModel.appendChild(fallback);
+    el.ollamaModel.value = safePreferred;
+    return;
+  }
+
+  uniqueModels.forEach((model) => {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model;
+    el.ollamaModel.appendChild(option);
+  });
+
+  if (!uniqueModels.includes(safePreferred)) {
+    const configured = document.createElement("option");
+    configured.value = safePreferred;
+    configured.textContent = `${safePreferred} (configured)`;
+    el.ollamaModel.appendChild(configured);
+  }
+
+  el.ollamaModel.value = safePreferred;
+}
+
+async function refreshOllamaModels(showStatus = false) {
+  if (!el.ollamaBaseUrl || !el.ollamaModel) {
+    return;
+  }
+
+  const baseUrl = el.ollamaBaseUrl.value.trim() || "http://127.0.0.1:11434";
+  const currentModel = getCurrentOllamaModelValue("llama3.2");
+
+  try {
+    const result = assertOk(
+      await window.pennyworth.listOllamaModels({ baseUrl }),
+      "Failed to fetch Ollama model list."
+    );
+
+    const models = Array.isArray(result.models) ? result.models : [];
+    setOllamaModelOptions(models, currentModel);
+
+    if (showStatus) {
+      const message =
+        models.length > 0
+          ? `Loaded ${models.length} Ollama model(s).`
+          : "Connected to Ollama, but no local models were found.";
+      setStatus(message, models.length > 0 ? "ok" : "error");
+    }
+  } catch (error) {
+    setOllamaModelOptions([], currentModel);
+    if (showStatus) {
+      setStatus(`Could not load Ollama models. ${extractErrorText(error)}`, "error");
+    }
+  }
+}
+
+function getProviderFromButton(button) {
+  return String(button?.dataset?.provider || "").trim().toLowerCase();
+}
+
+function getActiveProviderFromConfig(providerConfig) {
+  if (!providerConfig?.providers) {
+    return "ollama";
+  }
+
+  const defaultProvider = String(providerConfig.defaultProvider || "ollama").toLowerCase();
+  if (providerConfig.providers[defaultProvider]?.enabled) {
+    return defaultProvider;
+  }
+
+  const firstEnabled = Object.keys(providerConfig.providers).find(
+    (provider) => providerConfig.providers[provider]?.enabled
+  );
+  return firstEnabled || defaultProvider || "ollama";
+}
+
+function setActiveProviderTab(provider) {
+  const next = ["ollama", "openai", "gemini"].includes(provider) ? provider : "ollama";
+  state.activeProviderTab = next;
+
+  const tabMap = {
+    ollama: el.llmTabOllama,
+    openai: el.llmTabOpenAI,
+    gemini: el.llmTabGemini,
+  };
+
+  const panelMap = {
+    ollama: el.llmPanelOllama,
+    openai: el.llmPanelOpenAI,
+    gemini: el.llmPanelGemini,
+  };
+
+  Object.entries(tabMap).forEach(([name, node]) => {
+    if (!node) {
+      return;
+    }
+    const active = name === next;
+    node.classList.toggle("llm-tab-active", active);
+    node.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+
+  Object.entries(panelMap).forEach(([name, node]) => {
+    if (!node) {
+      return;
+    }
+    node.classList.toggle("hidden", name !== next);
+  });
+}
+
 function renderProviderSetupStatus(providerConfig) {
   setProviderStatusChip(el.ollamaStatus, "Ollama", null);
   setProviderStatusChip(el.openaiKeyStatus, "OpenAI", {
@@ -479,22 +804,43 @@ function renderProviderSetupStatus(providerConfig) {
   });
 }
 
-async function refreshProviderHealth() {
+async function refreshProviderHealth(showNoProviderMessage = false) {
   try {
     const result = assertOk(
       await window.pennyworth.getProviderHealth(),
       "Failed to check provider connectivity."
     );
     const health = result.health || {};
+    state.providerHealth = health;
     setProviderStatusChip(el.ollamaStatus, "Ollama", health.ollama);
     setProviderStatusChip(el.openaiKeyStatus, "OpenAI", health.openai);
     setProviderStatusChip(el.geminiKeyStatus, "Gemini", health.gemini);
+    applyProviderAvailabilityUi(health, showNoProviderMessage);
+    return health;
   } catch (error) {
+    state.providerHealth = null;
     setProviderStatusChip(el.ollamaStatus, "Ollama", { state: "error", message: "health check failed" });
     setProviderStatusChip(el.openaiKeyStatus, "OpenAI", { state: "error", message: "health check failed" });
     setProviderStatusChip(el.geminiKeyStatus, "Gemini", { state: "error", message: "health check failed" });
+    updateBadges("noprovider");
     reportFailure("Provider health check failed:", error, false);
+    return null;
   }
+}
+
+async function ensureActiveProviderForAsk() {
+  const health = await refreshProviderHealth(false);
+  if (!health) {
+    showNoProviderGuidance(true);
+    return false;
+  }
+
+  if (applyProviderAvailabilityUi(health, false)) {
+    return true;
+  }
+
+  showNoProviderGuidance(true);
+  return false;
 }
 
 function closeSettingsModal() {
@@ -518,20 +864,17 @@ function populateSettingsForm(settingsPayload) {
   }
   updateTracePanelVisibility();
 
-  el.defaultProviderSelect.value = providerConfig.defaultProvider;
-  el.ollamaEnabled.checked = providerConfig.providers.ollama.enabled;
   el.ollamaBaseUrl.value = providerConfig.providers.ollama.baseUrl;
-  el.ollamaModel.value = providerConfig.providers.ollama.model;
+  setOllamaModelOptions([], providerConfig.providers.ollama.model);
 
-  el.openaiEnabled.checked = providerConfig.providers.openai.enabled;
   el.openaiModel.value = providerConfig.providers.openai.model;
   el.openaiApiKey.value = "";
-  el.clearOpenAI.checked = false;
 
-  el.geminiEnabled.checked = providerConfig.providers.gemini.enabled;
   el.geminiModel.value = providerConfig.providers.gemini.model;
   el.geminiApiKey.value = "";
-  el.clearGemini.checked = false;
+  state.clearApiKeys.openai = false;
+  state.clearApiKeys.gemini = false;
+  setActiveProviderTab(getActiveProviderFromConfig(providerConfig));
 
   renderProviderSetupStatus(providerConfig);
 }
@@ -550,6 +893,9 @@ async function openSettingsModal() {
         : "Settings opened. Secure keychain unavailable; API key save may fail.",
       result.providerConfig.secureStorageAvailable ? "ok" : "error"
     );
+    if (state.activeProviderTab === "ollama") {
+      await refreshOllamaModels(false);
+    }
     await refreshProviderHealth();
   } catch (error) {
     reportFailure("Settings error:", error, true);
@@ -557,6 +903,10 @@ async function openSettingsModal() {
 }
 
 async function saveSettings() {
+  const activeProvider = state.activeProviderTab || "ollama";
+  const openaiApiKey = el.openaiApiKey.value.trim();
+  const geminiApiKey = el.geminiApiKey.value.trim();
+
   const payload = {
     agentContext: {
       docsRootUrlOverride: el.docsRootOverride.value.trim(),
@@ -564,28 +914,28 @@ async function saveSettings() {
       devMode: Boolean(el.devMode?.checked),
     },
     providerConfig: {
-      defaultProvider: el.defaultProviderSelect.value,
+      defaultProvider: activeProvider,
       providers: {
         ollama: {
-          enabled: el.ollamaEnabled.checked,
+          enabled: activeProvider === "ollama",
           baseUrl: el.ollamaBaseUrl.value.trim(),
           model: el.ollamaModel.value.trim(),
         },
         openai: {
-          enabled: el.openaiEnabled.checked,
+          enabled: activeProvider === "openai",
           model: el.openaiModel.value.trim(),
         },
         gemini: {
-          enabled: el.geminiEnabled.checked,
+          enabled: activeProvider === "gemini",
           model: el.geminiModel.value.trim(),
         },
       },
     },
     secrets: {
-      openaiApiKey: el.openaiApiKey.value,
-      geminiApiKey: el.geminiApiKey.value,
-      clearOpenAI: el.clearOpenAI.checked,
-      clearGemini: el.clearGemini.checked,
+      openaiApiKey,
+      geminiApiKey,
+      clearOpenAI: !openaiApiKey && state.clearApiKeys.openai,
+      clearGemini: !geminiApiKey && state.clearApiKeys.gemini,
     },
   };
 
@@ -626,6 +976,11 @@ async function askAgent() {
     return;
   }
 
+  const providerReady = await ensureActiveProviderForAsk();
+  if (!providerReady) {
+    return;
+  }
+
   appendMessage("user", question, "You");
   state.history.push({ role: "user", content: question });
   el.promptInput.value = "";
@@ -638,10 +993,17 @@ async function askAgent() {
       question,
       history: state.history,
       screenshotAttached: Boolean(state.screenshotData),
+      screenshotData: state.screenshotData || null,
     });
 
     if (!result.ok) {
-      reportFailure("Agent failed:", result.error, true);
+      let providerHintShown = false;
+      const details = extractErrorText(result.error, "");
+      if (/(no enabled providers|api key is missing|connection failed|not connected|refused)/i.test(details)) {
+        showNoProviderGuidance(true);
+        providerHintShown = true;
+      }
+      reportFailure("Agent failed:", result.error, !providerHintShown);
       return;
     }
 
@@ -696,22 +1058,10 @@ function startVoiceInput() {
 
 async function captureScreenFlow() {
   try {
+    setStatus("Detecting displays...");
+    await refreshCaptureDisplays();
     setStatus("Capturing screen...");
-    const captureResult = assertOk(
-      await window.pennyworth.captureScreen(),
-      "Screenshot capture failed."
-    );
-    const dataUrl = captureResult.imageDataUrl;
-
-    createCropCanvas(dataUrl);
-    el.cropModal.classList.remove("hidden");
-    setStatus("Choose a region or keep full screenshot.");
-
-    el.confirmCropBtn.onclick = () => {
-      setCapturedImage(dataUrl);
-      closeCropModal();
-      setStatus("Attached full screenshot.", "ok");
-    };
+    await openCaptureModalForCurrentDisplay();
   } catch (error) {
     reportFailure("Capture failed:", error, true);
   }
@@ -727,9 +1077,25 @@ function registerGlobalErrorHandlers() {
   });
 }
 
+async function invokeWindowControl(action, fallbackMessage) {
+  try {
+    if (!window.pennyworth || typeof action !== "function") {
+      throw new Error("Window controls are unavailable in this environment.");
+    }
+
+    const result = await action();
+    if (!result?.ok) {
+      throw new Error(extractErrorText(result?.error, fallbackMessage));
+    }
+  } catch (error) {
+    reportFailure("Window control failed:", error, true);
+  }
+}
+
 async function init() {
   registerGlobalErrorHandlers();
   await loadRuntime();
+  await refreshProviderHealth(false);
 
   appendMessage(
     "assistant",
@@ -741,6 +1107,24 @@ async function init() {
   el.captureBtn.addEventListener("click", captureScreenFlow);
   el.voiceBtn.addEventListener("click", startVoiceInput);
   el.settingsBtn.addEventListener("click", openSettingsModal);
+  if (el.windowMinBtn) {
+    el.windowMinBtn.addEventListener("click", () => {
+      invokeWindowControl(() => window.pennyworth.windowMinimize(), "Failed to minimize window.");
+    });
+  }
+  if (el.windowMaxBtn) {
+    el.windowMaxBtn.addEventListener("click", () => {
+      invokeWindowControl(
+        () => window.pennyworth.windowMaximizeToggle(),
+        "Failed to maximize or restore window."
+      );
+    });
+  }
+  if (el.windowCloseBtn) {
+    el.windowCloseBtn.addEventListener("click", () => {
+      invokeWindowControl(() => window.pennyworth.windowClose(), "Failed to close window.");
+    });
+  }
 
   el.promptInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -753,6 +1137,73 @@ async function init() {
     setCapturedImage(null);
     setStatus("Screenshot cleared.");
   });
+
+  if (el.displaySelect) {
+    el.displaySelect.addEventListener("change", async () => {
+      state.selectedDisplayKey = el.displaySelect.value;
+      if (el.cropModal.classList.contains("hidden")) {
+        return;
+      }
+
+      try {
+        setStatus("Switching monitor capture...");
+        await openCaptureModalForCurrentDisplay();
+      } catch (error) {
+        reportFailure("Display capture switch failed:", error, true);
+      }
+    });
+  }
+
+  if (el.ollamaBaseUrl) {
+    el.ollamaBaseUrl.addEventListener("blur", () => {
+      refreshOllamaModels(true);
+    });
+  }
+
+  [el.llmTabOllama, el.llmTabOpenAI, el.llmTabGemini].forEach((tab) => {
+    if (!tab) {
+      return;
+    }
+    tab.addEventListener("click", () => {
+      const provider = getProviderFromButton(tab);
+      setActiveProviderTab(provider);
+      if (provider === "ollama") {
+        refreshOllamaModels(false);
+      }
+    });
+  });
+
+  if (el.clearOpenAIBtn) {
+    el.clearOpenAIBtn.addEventListener("click", () => {
+      el.openaiApiKey.value = "";
+      state.clearApiKeys.openai = true;
+      setStatus("OpenAI API key will be cleared on save.", "ok");
+    });
+  }
+
+  if (el.clearGeminiBtn) {
+    el.clearGeminiBtn.addEventListener("click", () => {
+      el.geminiApiKey.value = "";
+      state.clearApiKeys.gemini = true;
+      setStatus("Gemini API key will be cleared on save.", "ok");
+    });
+  }
+
+  if (el.openaiApiKey) {
+    el.openaiApiKey.addEventListener("input", () => {
+      if (el.openaiApiKey.value.trim()) {
+        state.clearApiKeys.openai = false;
+      }
+    });
+  }
+
+  if (el.geminiApiKey) {
+    el.geminiApiKey.addEventListener("input", () => {
+      if (el.geminiApiKey.value.trim()) {
+        state.clearApiKeys.gemini = false;
+      }
+    });
+  }
 
   el.cancelCropBtn.addEventListener("click", closeCropModal);
   el.cancelSettingsBtn.addEventListener("click", closeSettingsModal);

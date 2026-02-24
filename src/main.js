@@ -1,6 +1,6 @@
 ﻿const path = require("path");
 const fs = require("fs");
-const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, ipcMain } = require("electron");
+const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, ipcMain, desktopCapturer } = require("electron");
 const axios = require("axios");
 const screenshot = require("screenshot-desktop");
 
@@ -972,11 +972,51 @@ ipcMain.handle("pennyworth:capture-screen", async (_event, payload) => {
     try {
       image = await screenshot(captureOptions);
     } catch (error) {
-      if (requestedScreenId !== null) {
-        image = await screenshot({ format: "png" });
-        warning = `Display-specific capture failed for '${requestedScreenId}'. Captured default display instead.`;
-      } else {
-        throw error;
+      // First fallback: try default display if specific display failed
+      try {
+        if (requestedScreenId !== null) {
+          image = await screenshot({ format: "png" });
+          warning = `Display-specific capture failed for '${requestedScreenId}'. Captured default display instead.`;
+        } else {
+          throw error;
+        }
+      } catch (innerError) {
+        // Second fallback: try Electron desktopCapturer (Wayland support)
+        console.log("Screenshot library failed, attempting Electron desktopCapturer fallback...", innerError.message);
+        
+        try {
+          const sources = await desktopCapturer.getSources({ 
+            types: ['screen'],
+            thumbnailSize: { width: 1920, height: 1080 }, // Set reasonable default size, will scale
+            fetchWindowIcons: false
+          });
+
+          let source = sources.find(s => String(s.display_id) === String(requestedScreenId));
+          if (!source) {
+            source = sources[0]; // Default to first screen if specific one not found
+            if (requestedScreenId) {
+               warning = `Display-specific capture failed for '${requestedScreenId}'. Captured primary display instead via fallback.`;
+            }
+          }
+
+          if (!source) {
+             throw new Error("No screen sources available via desktopCapturer");
+          }
+
+          // Re-fetch with higher resolution if possible or just use what we have
+          // For now, just use the thumbnail as the screenshot
+          // Note: thumbnail size is limited by Electron, but usually sufficient for chat context
+          image = source.thumbnail.toPNG();
+          
+          if (!warning) {
+             // Only add warning if we haven't already added one about display mismatch
+             // warning = "Used fallback capture method (Wayland compatibility mode)"; 
+             // (Optional: don't show warning if it works, transparency is better)
+          }
+        } catch (captureError) {
+           console.error("All screenshot methods failed:", captureError);
+           throw error; // Throw the original error from the library to show xrandr issue if fallback also fails
+        }
       }
     }
 

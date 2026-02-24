@@ -7,7 +7,7 @@
   "author": "Pennyworth Team",
   "scripts": {
     "start": "electron .",
-    "dev": "electron .",
+    "dev": "electron . --no-sandbox --ozone-platform-hint=auto",
     "crawl:docs": "node scripts/crawl-docs.js",
     "init:config": "node scripts/init-config.js",
     "json:normalize": "node scripts/normalize-json.js",

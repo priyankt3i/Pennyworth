@@ -1,4 +1,6 @@
 const axios = require("axios");
+const https = require("https");
+const fs = require("fs");
 require("dotenv").config();
 
 const {
@@ -321,6 +323,8 @@ async function askOllama(config, context) {
       options: {
         temperature: 0.2,
       },
+    }, {
+      httpsAgent: context.httpsAgent,
     });
 
     const message = response?.data?.message;
@@ -389,6 +393,8 @@ async function askOllama(config, context) {
           { role: "user", content: synthesisPrompt },
         ],
         stream: false,
+      }, {
+        httpsAgent: context.httpsAgent,
       });
 
       const upgradedReply = synthesis?.data?.message?.content?.trim();
@@ -434,6 +440,7 @@ async function askOpenAI(config, context) {
           Authorization: `Bearer ${apiKey}`,
         },
         timeout: 30000,
+        httpsAgent: context.httpsAgent,
       }
     );
 
@@ -519,6 +526,8 @@ async function askGemini(config, context) {
       generationConfig: {
         temperature: 0.2,
       },
+    }, {
+      httpsAgent: context.httpsAgent,
     });
 
     const candidate = response?.data?.candidates?.[0];
@@ -580,12 +589,23 @@ async function askProvider(providerName, providerConfig, context) {
 
 async function askWithFailover(providerState, context) {
   currentSessionCancelled = false;
-  const { defaultProvider, providers } = providerState;
+  const { defaultProvider, providers, customCaCertPath } = providerState;
   const order = [defaultProvider, ...Object.keys(providers).filter((k) => k !== defaultProvider)];
+
+  let httpsAgent = null;
+  if (customCaCertPath && fs.existsSync(customCaCertPath)) {
+    try {
+      const caCert = fs.readFileSync(customCaCertPath);
+      httpsAgent = new https.Agent({ ca: caCert });
+    } catch (err) {
+      console.error("Failed to load custom CA Certificate:", err.message);
+    }
+  }
 
   const traceContext = {
     ...context,
     toolTrace: [],
+    httpsAgent,
   };
 
   let lastError = null;

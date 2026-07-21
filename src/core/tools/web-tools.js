@@ -1,9 +1,7 @@
 const axios = require("axios");
 const cheerio = require("cheerio");
 
-const customHttpsAgent = new (require("https").Agent)({
-  rejectUnauthorized: false,
-});
+const defaultHttpsAgent = new (require("https").Agent)(); // secure by default!
 
 function decodeDuckDuckGoUrl(rawUrl) {
   if (!rawUrl) {
@@ -31,14 +29,14 @@ function normalizeSearchQuery(question) {
   return q.trim();
 }
 
-async function duckDuckGoSearch(query, limit = 5) {
+async function duckDuckGoSearch(query, limit = 5, httpsAgent) {
   const response = await axios.get("https://duckduckgo.com/html/", {
     params: { q: query },
     headers: {
       "User-Agent": "Mozilla/5.0 (Pennyworth)",
     },
     timeout: 9000,
-    httpsAgent: customHttpsAgent,
+    httpsAgent: httpsAgent || defaultHttpsAgent,
   });
 
   const $ = cheerio.load(response.data || "");
@@ -98,7 +96,7 @@ function isWebSearchIntent(question) {
   return false;
 }
 
-async function runWebSearchTool(question, queryOverride) {
+async function runWebSearchTool(question, queryOverride, httpsAgent) {
   const query = String(queryOverride || normalizeSearchQuery(question)).trim();
   if (!query) {
     return {
@@ -108,7 +106,7 @@ async function runWebSearchTool(question, queryOverride) {
     };
   }
 
-  const results = await duckDuckGoSearch(query, 5);
+  const results = await duckDuckGoSearch(query, 5, httpsAgent);
   return {
     handled: true,
     tool: "web_search",

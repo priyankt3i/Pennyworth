@@ -270,6 +270,7 @@ async function runToolAndFormat(name, args, context, providerName) {
       question: context.userPrompt,
       systemContext: context.systemContext,
       agentContext: context.agentContext,
+      httpsAgent: context.httpsAgent,
     });
 
     pushTrace(context, {

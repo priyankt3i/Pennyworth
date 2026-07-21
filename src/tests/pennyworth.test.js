@@ -268,14 +268,21 @@ test("Multi-Session Chat Database", async (t) => {
   });
 
   await t.test("should list all session metadata in descending order", () => {
+    const sessionsModule = require("../main/sessions");
+
     const file1 = path.join(sessionsDir, "session-1.json");
-    fs.writeFileSync(file1, JSON.stringify({ id: "session-1", title: "A", createdAt: "2026-07-20T12:00:00Z" }), "utf8");
+    fs.writeFileSync(file1, JSON.stringify({ id: "session-1", title: "A", createdAt: "2026-07-20T12:00:00Z", updatedAt: "2026-07-20T12:00:00Z" }), "utf8");
 
     const file2 = path.join(sessionsDir, "session-2.json");
-    fs.writeFileSync(file2, JSON.stringify({ id: "session-2", title: "B", createdAt: "2026-07-20T13:00:00Z" }), "utf8");
+    fs.writeFileSync(file2, JSON.stringify({ id: "session-2", title: "B", createdAt: "2026-07-20T13:00:00Z", updatedAt: "2026-07-20T13:00:00Z" }), "utf8");
 
-    const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith(".json"));
-    assert.strictEqual(files.length, 3);
+    const result = sessionsModule.listSessions();
+    assert.strictEqual(result.length, 3);
+    
+    // Sort orders should place the runtime-generated mock UUID first, followed by session-2, and then session-1.
+    assert.strictEqual(result[0].id, testSessionId);
+    assert.strictEqual(result[1].id, "session-2");
+    assert.strictEqual(result[2].id, "session-1");
   });
 
   if (fs.existsSync(sessionsDir)) {
@@ -348,5 +355,21 @@ test("Security Hardening & Redesign Checks", async (t) => {
 
     const res2 = tools.assessCommandRisk("type C:\\Users\\user\\.env");
     assert.strictEqual(res2.score, 4);
+  });
+
+  await t.test("should block obfuscated commands (quote splitting, variable indirection)", () => {
+    const res = tools.assessCommandRisk("cat ~/.s\"s\"h/id_r's'a");
+    assert.strictEqual(res.score, 4);
+
+    const res2 = tools.assessCommandRisk("a=.env; cat $a");
+    assert.strictEqual(res2.score, 4);
+  });
+
+  await t.test("should block Windows and PowerShell destructive commands", () => {
+    const res = tools.assessCommandRisk("Remove-Item -Path C:\\ -Recurse -Force");
+    assert.strictEqual(res.score, 4);
+
+    const res2 = tools.assessCommandRisk("Clear-Disk -Number 1");
+    assert.strictEqual(res.score, 4);
   });
 });

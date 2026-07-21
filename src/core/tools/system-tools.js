@@ -34,13 +34,12 @@ function requestUserApproval(title, message, detail) {
 function isSensitivePath(filepath) {
   const normalized = String(filepath || "").toLowerCase().replace(/\\/g, "/");
   const patterns = [
-    /id_rsa/,
+    /id_rsa/, /id_dsa/, /id_ecdsa/, /id_ed25519/,
+    /authorized_keys/, /known_hosts/,
+    /\.bashrc/, /\.zshrc/, /\.profile/, /\.bash_profile/, /\.bash_login/, /\.bash_logout/,
     /\.env/,
-    /shadow/,
-    /etc\/passwd/,
-    /master\.passwd/,
-    /sam\b/,
-    /system32\/config/,
+    /shadow/, /etc\/passwd/, /master\.passwd/, /etc\/group/, /etc\/gshadow/, /etc\/sudoers/, /etc\/hosts/,
+    /sam\b/, /system32\/config/,
   ];
   return patterns.some((p) => p.test(normalized));
 }
@@ -56,6 +55,12 @@ function tryRunCommand(cmd) {
 function assessCommandRisk(command) {
   const normalized = command.trim().toLowerCase();
   
+  // Strip quotes to prevent quote-splitting evasion: id_r"s"a -> id_rsa
+  const strippedQuotes = normalized.replace(/['"`]/g, "");
+  
+  // Normalize path slashes to simplify checking directory boundaries
+  const unifiedPaths = strippedQuotes.replace(/\\/g, "/");
+  
   // 1. Critical Blocklist (Risk 4 - Blocked)
   const blockedPatterns = [
     /rm\s+-rf\s+\//,
@@ -70,16 +75,45 @@ function assessCommandRisk(command) {
     /passwd\s+root/i,
     /net\s+user\s+.*?\s+\/add/i,
     /id_rsa/i,
+    /id_dsa/i,
+    /id_ecdsa/i,
+    /id_ed25519/i,
     /\.env/i,
     /shadow/i,
     /etc\/passwd/i,
     /master\.passwd/i,
     /sam\b/i,
     /system32\/config/i,
+    /authorized_keys/i,
+    /known_hosts/i,
+    
+    // Obfuscated credential folder scanning
+    /\.ssh\b/i,
+    /\.aws\b/i,
+    /\.kube\b/i,
+    /\.git-credentials\b/i,
+    
+    // Windows/PowerShell Destructive equivalents
+    /remove-item\s+.*?-recurse.*?-force/i,
+    /remove-item\s+.*?-force.*?-recurse/i,
+    /rmdir\s+\/s\s+\/q\s+c:/i,
+    /rd\s+\/s\s+\/q\s+c:/i,
+    /clear-disk/i,
+    /initialize-disk/i,
+    /format-volume/i,
+    /format-disk/i,
+    /(invoke-expression|iex)\s*\(.*?(downloadstring|downloadfile)/i,
+    /(invoke-webrequest|iwr).*?\|\s*(iex|invoke-expression)/i,
+    /new-localuser/i,
+    /add-localgroupmember/i,
+    /reg\s+save\s+(hklm\\sam|hklm\\system)/i,
+    
+    // Variable substitution indirection detection
+    /=[a-z0-9_.\-\/]+;.*?(cat|type|get-content|gc)\s+\$/i,
   ];
 
-  if (blockedPatterns.some(pattern => pattern.test(normalized))) {
-    return { score: 4, category: "CRITICAL_BLOCKED", reason: "Destructive pattern or download-and-execute shell pipe detected." };
+  if (blockedPatterns.some(pattern => pattern.test(unifiedPaths))) {
+    return { score: 4, category: "CRITICAL_BLOCKED", reason: "Destructive pattern, sensitive credential directory access, or download-and-execute shell pipe detected." };
   }
 
   // 2. High Risk (Risk 3 - Mandatory explicit approval)
@@ -94,9 +128,21 @@ function assessCommandRisk(command) {
     /netsh\s+/i,
     /iptables\s+/i,
     /ufw\s+/i,
+    
+    // Windows/PowerShell High Risk equivalents
+    /stop-service/i,
+    /disable-service/i,
+    /set-service/i,
+    /set-itemproperty/i,
+    /remove-itemproperty/i,
+    /new-itemproperty/i,
+    /set-netfirewallrule/i,
+    /disable-netfirewallrule/i,
+    /restart-computer/i,
+    /stop-computer/i,
   ];
 
-  if (highRiskPatterns.some(pattern => pattern.test(normalized))) {
+  if (highRiskPatterns.some(pattern => pattern.test(unifiedPaths))) {
     return { score: 3, category: "HIGH_RISK", reason: "Modifies system services, registry settings, networking, or deletes files." };
   }
 
@@ -212,11 +258,22 @@ async function readSystemFile(filepath) {
 }
 
 async function writeSystemFile(filepath, content) {
-  const approved = requestUserApproval(
-    "Write System File",
-    "Hermes Agent is requesting to write or overwrite a file on your computer.",
-    `File path: ${filepath}\n\nWARNING: Modifying system files can break applications or alter OS configurations.`
-  );
+  const isSensitive = isSensitivePath(filepath);
+  let approved = false;
+
+  if (isSensitive) {
+    approved = requestUserApproval(
+      "SECURITY WARNING: Write Sensitive System File",
+      "Hermes Agent is requesting to modify a highly sensitive system file or user credentials file.",
+      `File path: ${filepath}\n\nWARNING: Modifying shell profiles, SSH key rings, system hosts, or credentials files can compromise system security or lock you out of your machine.`
+    );
+  } else {
+    approved = requestUserApproval(
+      "Write System File",
+      "Hermes Agent is requesting to write or overwrite a file on your computer.",
+      `File path: ${filepath}\n\nWARNING: Modifying system files can break applications or alter OS configurations.`
+    );
+  }
 
   if (!approved) {
     return "FILE_WRITE_DENIED: The user denied permission to write this file.";

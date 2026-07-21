@@ -332,6 +332,7 @@ async function executeToolFunction(name, args, runtimeContext) {
   const systemContext = runtimeContext?.systemContext || {};
   const agentContext = runtimeContext?.agentContext || {};
   const question = runtimeContext?.question || "";
+  const httpsAgent = runtimeContext?.httpsAgent || null;
 
   if (name === "get_current_datetime") {
     return runDateTimeTool(systemContext).reply;
@@ -343,12 +344,13 @@ async function executeToolFunction(name, args, runtimeContext) {
       location: args.location,
       useIpLocation: args.use_ip_location,
       agentContext,
+      httpsAgent,
     });
     return result.reply;
   }
 
   if (name === "web_search") {
-    const result = await runWebSearchTool(question, args.query);
+    const result = await runWebSearchTool(question, args.query, httpsAgent);
     return result.reply;
   }
 
@@ -388,7 +390,7 @@ async function executeToolFunction(name, args, runtimeContext) {
   throw new Error(`Unknown tool '${name}'.`);
 }
 
-async function runAgentTooling({ question, systemContext, agentContext }) {
+async function runAgentTooling({ question, systemContext, agentContext, httpsAgent }) {
   const text = String(question || "");
   const smallTalk = runSmallTalkTool(text);
   if (smallTalk.handled) {
@@ -400,6 +402,7 @@ async function runAgentTooling({ question, systemContext, agentContext }) {
       return await runWeatherToolWithOptions({
         question: text,
         agentContext,
+        httpsAgent,
       });
     } catch (error) {
       return {
@@ -416,7 +419,7 @@ async function runAgentTooling({ question, systemContext, agentContext }) {
 
   if (isWebSearchIntent(text)) {
     try {
-      return await runWebSearchTool(text);
+      return await runWebSearchTool(text, null, httpsAgent);
     } catch (error) {
       return {
         handled: true,

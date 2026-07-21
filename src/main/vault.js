@@ -4,9 +4,23 @@ const { storeGet, storeSet } = require("./store");
 
 let sessionEncryptionKey = null;
 
-function deriveKeyFromPassphrase(passphrase) {
-  const salt = "pennyworth-vault-salt-secure-unique-string-1337";
-  return crypto.pbkdf2Sync(passphrase, salt, 100000, 32, "sha256");
+const STATIC_SALT_FALLBACK = "pennyworth-vault-salt-secure-unique-string-1337";
+
+function getActiveSalt() {
+  const storedSalt = storeGet("vaultSalt");
+  if (storedSalt) {
+    return storedSalt;
+  }
+  // Fallback to static salt only if vault Sentinel is already present on disk (old setup)
+  if (storeGet("vaultSentinel")) {
+    return STATIC_SALT_FALLBACK;
+  }
+  return null;
+}
+
+function deriveKeyFromPassphrase(passphrase, salt = null) {
+  const activeSalt = salt || getActiveSalt() || STATIC_SALT_FALLBACK;
+  return crypto.pbkdf2Sync(passphrase, activeSalt, 100000, 32, "sha256");
 }
 
 function getEncryptionKey() {
@@ -91,9 +105,16 @@ async function setStoredApiKey(account, value) {
   }
 
   // Fallback to local passphrase vault
-  const encrypted = encrypt(value);
-  storeSet(`secret_fallback_${account}`, encrypted);
-  storeSet(`secret_${account}`, undefined);
+  try {
+    const encrypted = encrypt(value);
+    storeSet(`secret_fallback_${account}`, encrypted);
+    storeSet(`secret_${account}`, undefined);
+  } catch (e) {
+    if (e.message === "VAULT_LOCKED") {
+      throw new Error("Local credential vault is locked or uninitialized. Please initialize or unlock your vault first under the Security Vault settings.");
+    }
+    throw e;
+  }
 }
 
 async function clearStoredApiKey(account) {
@@ -112,7 +133,10 @@ function setupVault(passphrase) {
   if (!passphrase || passphrase.length < 8) {
     throw new Error("Passphrase must be at least 8 characters long.");
   }
-  sessionEncryptionKey = deriveKeyFromPassphrase(passphrase);
+  const newSalt = crypto.randomBytes(32).toString("hex");
+  storeSet("vaultSalt", newSalt);
+
+  sessionEncryptionKey = deriveKeyFromPassphrase(passphrase, newSalt);
   const sentinel = encrypt("pennyworth-vault-unlocked-sentinel");
   storeSet("vaultSentinel", sentinel);
   return true;
@@ -123,7 +147,8 @@ function unlockVault(passphrase) {
   if (!sentinel) {
     throw new Error("Vault is not initialized.");
   }
-  const tempKey = deriveKeyFromPassphrase(passphrase);
+  const activeSalt = getActiveSalt();
+  const tempKey = deriveKeyFromPassphrase(passphrase, activeSalt);
   
   const parts = sentinel.split(":");
   const iv = Buffer.from(parts[0], "hex");

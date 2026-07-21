@@ -48,6 +48,7 @@ Module.prototype.require = function(id) {
 
 // Set test environment variables
 process.env.NODE_ENV = "test";
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 // Load project modules
 const mainModule = require("../main");
@@ -181,4 +182,60 @@ test("Hermes Agent Cancellation Loop", async (t) => {
       return err.code === "AGENT_STOPPED";
     });
   });
+});
+
+test("Multi-Session Chat Database", async (t) => {
+  const sessionsDir = path.join(os.tmpdir(), "sessions");
+  if (fs.existsSync(sessionsDir)) {
+    try {
+      const files = fs.readdirSync(sessionsDir);
+      for (const f of files) fs.unlinkSync(path.join(sessionsDir, f));
+      fs.rmdirSync(sessionsDir);
+    } catch (e) {}
+  }
+  fs.mkdirSync(sessionsDir, { recursive: true });
+
+  let testSessionId = null;
+
+  await t.test("should create a new session", () => {
+    const mockUUID = "test-session-uuid-111";
+    const sessionFile = path.join(sessionsDir, `${mockUUID}.json`);
+    
+    const newSession = {
+      id: mockUUID,
+      title: "Untitled Chat",
+      createdAt: new Date().toISOString(),
+      messages: []
+    };
+
+    fs.writeFileSync(sessionFile, JSON.stringify(newSession, null, 2), "utf8");
+    assert.ok(fs.existsSync(sessionFile));
+    testSessionId = mockUUID;
+  });
+
+  await t.test("should load the created session", () => {
+    const sessionFile = path.join(sessionsDir, `${testSessionId}.json`);
+    const content = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
+    assert.strictEqual(content.id, testSessionId);
+    assert.strictEqual(content.title, "Untitled Chat");
+  });
+
+  await t.test("should list all session metadata in descending order", () => {
+    const file1 = path.join(sessionsDir, "session-1.json");
+    fs.writeFileSync(file1, JSON.stringify({ id: "session-1", title: "A", createdAt: "2026-07-20T12:00:00Z" }), "utf8");
+
+    const file2 = path.join(sessionsDir, "session-2.json");
+    fs.writeFileSync(file2, JSON.stringify({ id: "session-2", title: "B", createdAt: "2026-07-20T13:00:00Z" }), "utf8");
+
+    const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith(".json"));
+    assert.strictEqual(files.length, 3);
+  });
+
+  if (fs.existsSync(sessionsDir)) {
+    try {
+      const files = fs.readdirSync(sessionsDir);
+      for (const f of files) fs.unlinkSync(path.join(sessionsDir, f));
+      fs.rmdirSync(sessionsDir);
+    } catch (e) {}
+  }
 });

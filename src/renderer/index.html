@@ -9,80 +9,92 @@
   </head>
   <body>
     <main class="app-shell">
-      <header class="topbar">
-        <div class="brand">
-          <img class="brand-logo" src="../../public/pennyworth.png" alt="Pennyworth logo" />
-          <div>
-            <h1>Pennyworth</h1>
-            <p id="subTitle">Context loading...</p>
+      <aside class="sidebar no-drag" id="sidebar">
+        <div class="sidebar-header">
+          <button id="newChatBtn" class="new-chat-btn" type="button">+ New Chat</button>
+        </div>
+        <div class="sessions-list" id="sessionsList">
+          <!-- Session items loaded dynamically -->
+        </div>
+      </aside>
+
+      <section class="main-content">
+        <header class="topbar">
+          <div class="brand">
+            <button id="toggleSidebarBtn" class="no-drag hamburger-btn" type="button" aria-label="Toggle Sidebar">☰</button>
+            <img class="brand-logo" src="../../public/pennyworth.png" alt="Pennyworth logo" />
+            <div>
+              <h1>Pennyworth</h1>
+              <p id="subTitle">Context loading...</p>
+            </div>
           </div>
-        </div>
-        <div class="runtime-meta no-drag">
-          <span id="runtimePill" class="runtime-pill">Starting</span>
-          <button id="settingsBtn" type="button" aria-label="Settings">
-            <img class="settings-icon" src="../../public/settings.png" alt="" />
-          </button>
-          <button id="providerBadge" type="button" aria-label="Provider">
-            <img id="providerBadgeIcon" class="provider-icon" src="../../public/ollama.png" alt="" />
-          </button>
-          <div class="window-controls">
-            <button 
-              id="windowCloseBtn" 
-              class="window-dot window-dot-close" 
-              type="button" 
-              data-tooltip="Close" 
-              aria-label="Close to tray"
-              title="Close to tray">
-              <span aria-hidden="true"></span>
+          <div class="runtime-meta no-drag">
+            <span id="runtimePill" class="runtime-pill">Starting</span>
+            <button id="settingsBtn" type="button" aria-label="Settings">
+              <img class="settings-icon" src="../../public/settings.png" alt="" />
             </button>
-            <button 
-              id="windowMinBtn" 
-              class="window-dot window-dot-min" 
-              type="button" 
-              data-tooltip="Minimize" 
-              aria-label="Minimize"
-              title="Minimize">
-              <span aria-hidden="true"></span>
+            <button id="providerBadge" type="button" aria-label="Provider">
+              <img id="providerBadgeIcon" class="provider-icon" src="../../public/ollama.png" alt="" />
             </button>
-            <button
-              id="windowMaxBtn"
-              class="window-dot window-dot-max"
-              type="button"
-              data-tooltip="Fullscreen"
-              title="Fullscreen"
-              aria-label="Maximize or Restore"
-            >
-              <span aria-hidden="true"></span>
-            </button>
+            <div class="window-controls">
+              <button 
+                id="windowCloseBtn" 
+                class="window-dot window-dot-close" 
+                type="button" 
+                data-tooltip="Close" 
+                aria-label="Close to tray"
+                title="Close to tray">
+                <span aria-hidden="true"></span>
+              </button>
+              <button 
+                id="windowMinBtn" 
+                class="window-dot window-dot-min" 
+                type="button" 
+                data-tooltip="Minimize" 
+                aria-label="Minimize"
+                title="Minimize">
+                <span aria-hidden="true"></span>
+              </button>
+              <button
+                id="windowMaxBtn"
+                class="window-dot window-dot-max"
+                type="button"
+                data-tooltip="Fullscreen"
+                title="Fullscreen"
+                aria-label="Maximize or Restore"
+              >
+                <span aria-hidden="true"></span>
+              </button>
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <section id="chat" class="chat"></section>
-      <section id="tracePanel" class="trace-panel hidden">
-        <div class="trace-header">Tool Trace (Dev Mode)</div>
-        <pre id="traceContent">No tool calls captured yet.</pre>
-      </section>
+        <section id="chat" class="chat"></section>
+        <section id="tracePanel" class="trace-panel hidden">
+          <div class="trace-header">Tool Trace (Dev Mode)</div>
+          <pre id="traceContent">No tool calls captured yet.</pre>
+        </section>
 
-      <section class="composer">
-        <div class="composer-actions">
-          <select id="profileSelect" disabled title="Auto-detected profile"></select>
-          <button id="captureBtn" type="button">Screen</button>
-          <button id="voiceBtn" type="button">Voice</button>
-        </div>
+        <section class="composer">
+          <div class="composer-actions">
+            <select id="profileSelect" disabled title="Auto-detected profile"></select>
+            <button id="captureBtn" type="button">Screen</button>
+            <button id="voiceBtn" type="button">Voice</button>
+          </div>
 
-        <div id="capturePreview" class="capture-preview hidden">
-          <img id="captureImage" alt="Captured context" />
-          <span id="captureInfo">Screenshot attached</span>
-          <button id="clearCaptureBtn" type="button" aria-label="Remove screenshot">Remove</button>
-        </div>
+          <div id="capturePreview" class="capture-preview hidden">
+            <img id="captureImage" alt="Captured context" />
+            <span id="captureInfo">Screenshot attached</span>
+            <button id="clearCaptureBtn" type="button" aria-label="Remove screenshot">Remove</button>
+          </div>
 
-        <textarea id="promptInput" placeholder="Ask a question or paste terminal output."></textarea>
+          <textarea id="promptInput" placeholder="Ask a question or paste terminal output."></textarea>
 
-        <div class="composer-footer">
-          <div id="status">Ready.</div>
-          <button id="sendBtn" type="button">Send</button>
-        </div>
+          <div class="composer-footer">
+            <div id="status">Ready.</div>
+            <button id="sendBtn" type="button">Send</button>
+          </div>
+        </section>
       </section>
     </main>
 

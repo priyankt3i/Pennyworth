@@ -95,8 +95,9 @@ body {
   width: 100vw;
   height: 100vh;
   display: grid;
-  grid-template-rows: 68px minmax(0, 1fr) auto auto;
+  grid-template-columns: 260px minmax(0, 1fr);
   background: transparent;
+  transition: grid-template-columns 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .topbar {
@@ -703,14 +704,17 @@ select:disabled {
 
 .loader {
   position: fixed;
-  inset: 0;
-  z-index: 999;
-  display: grid;
-  place-content: center;
-  gap: 16px;
-  text-align: center;
-  color: var(--text);
-  background: var(--overlay);
+  bottom: 120px;
+  right: 24px;
+  z-index: 99;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
@@ -718,13 +722,12 @@ select:disabled {
 .loader p {
   margin: 0;
   color: var(--text);
-  font-size: 0.95rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  letter-spacing: -0.01em;
 }
 
 .loader-bar {
-  width: 200px;
+  width: 80px;
   height: 4px;
   overflow: hidden;
   border-radius: 8px;
@@ -1079,4 +1082,151 @@ select:disabled {
   .llm-tabs {
     grid-template-columns: 1fr;
   }
+}
+
+/* Sidebar and Layout updates */
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 0px minmax(0, 1fr);
+}
+
+.sidebar {
+  width: 260px;
+  height: 100%;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.02);
+}
+
+.dark-theme .sidebar {
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.2);
+}
+
+.app-shell.sidebar-collapsed .sidebar {
+  transform: translateX(-260px);
+}
+
+.sidebar-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.new-chat-btn {
+  width: 100%;
+  border: 1px dashed var(--accent);
+  color: var(--accent);
+  background: var(--accent-muted);
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.new-chat-btn:hover {
+  border-color: var(--accent-strong);
+  background: var(--accent-glow);
+  color: var(--accent-strong);
+}
+
+.sessions-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.session-item:hover {
+  background: var(--surface);
+}
+
+.session-item.active {
+  background: var(--surface-2);
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+
+.session-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 24px;
+}
+
+.delete-session-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%) scale(0.9);
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  color: var(--muted-2);
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.15s ease;
+}
+
+.session-item:hover .delete-session-btn {
+  opacity: 1;
+}
+
+.delete-session-btn:hover {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.main-content {
+  display: grid;
+  grid-template-rows: 68px minmax(0, 1fr) auto auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.hamburger-btn {
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 1.15rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.hamburger-btn:hover {
+  background: var(--surface);
+  color: var(--text);
 }

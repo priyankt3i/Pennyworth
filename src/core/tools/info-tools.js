@@ -31,9 +31,7 @@ const WEATHER_CODE_MAP = {
   99: "Thunderstorm with heavy hail",
 };
 
-const customHttpsAgent = new (require("https").Agent)({
-  rejectUnauthorized: false,
-});
+const defaultHttpsAgent = new (require("https").Agent)(); // secure by default!
 
 function isWeatherIntent(question) {
   return /\b(weather|temperature|forecast|rain|humidity|wind|hot|cold|snow)\b/i.test(question || "");
@@ -107,7 +105,7 @@ function weatherCodeToLabel(code) {
   return WEATHER_CODE_MAP[Number(code)] || `Weather code ${code}`;
 }
 
-async function geocodeLocation(locationText) {
+async function geocodeLocation(locationText, httpsAgent) {
   const response = await axios.get("https://geocoding-api.open-meteo.com/v1/search", {
     params: {
       name: locationText,
@@ -116,7 +114,7 @@ async function geocodeLocation(locationText) {
       format: "json",
     },
     timeout: 7000,
-    httpsAgent: customHttpsAgent,
+    httpsAgent: httpsAgent || defaultHttpsAgent,
   });
 
   const first = response?.data?.results?.[0];
@@ -131,10 +129,10 @@ async function geocodeLocation(locationText) {
   };
 }
 
-async function geolocateByIp() {
+async function geolocateByIp(httpsAgent) {
   const response = await axios.get("https://ipapi.co/json/", {
     timeout: 7000,
-    httpsAgent: customHttpsAgent,
+    httpsAgent: httpsAgent || defaultHttpsAgent,
   });
   const body = response?.data || {};
 
@@ -149,7 +147,7 @@ async function geolocateByIp() {
   };
 }
 
-async function fetchWeather(latitude, longitude) {
+async function fetchWeather(latitude, longitude, httpsAgent) {
   const response = await axios.get("https://api.open-meteo.com/v1/forecast", {
     params: {
       latitude,
@@ -159,7 +157,7 @@ async function fetchWeather(latitude, longitude) {
       daily: ["temperature_2m_max", "temperature_2m_min", "weather_code"],
     },
     timeout: 7000,
-    httpsAgent: customHttpsAgent,
+    httpsAgent: httpsAgent || defaultHttpsAgent,
   });
 
   return response?.data || {};
@@ -210,7 +208,7 @@ function runDateTimeTool(systemContext) {
   };
 }
 
-async function runWeatherToolWithOptions({ question, location, useIpLocation, agentContext }) {
+async function runWeatherToolWithOptions({ question, location, useIpLocation, agentContext, httpsAgent }) {
   const questionLocation = extractLocation(question || "");
   const explicitLocation = String(location || questionLocation || "").trim();
   const allowIpFromSettings = Boolean(agentContext?.allowIpLocation);
@@ -220,10 +218,10 @@ async function runWeatherToolWithOptions({ question, location, useIpLocation, ag
   let source;
 
   if (explicitLocation) {
-    geo = await geocodeLocation(explicitLocation);
+    geo = await geocodeLocation(explicitLocation, httpsAgent);
     source = `explicit location '${explicitLocation}'`;
   } else if (allowIp) {
-    geo = await geolocateByIp();
+    geo = await geolocateByIp(httpsAgent);
     source = "approximate IP-based location";
   } else {
     return {
@@ -234,7 +232,7 @@ async function runWeatherToolWithOptions({ question, location, useIpLocation, ag
     };
   }
 
-  const weatherData = await fetchWeather(geo.latitude, geo.longitude);
+  const weatherData = await fetchWeather(geo.latitude, geo.longitude, httpsAgent);
   return {
     handled: true,
     tool: "weather",

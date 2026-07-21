@@ -42,7 +42,20 @@ function getStorePath() {
 
   const userDataDir = app.getPath("userData");
   fs.mkdirSync(userDataDir, { recursive: true });
-  storePath = path.join(userDataDir, "pennyworth-runtime.json");
+
+  const isBootstrapMode = process.env.npm_lifecycle_event === "start" || process.argv.includes("--bootstrap");
+  if (isBootstrapMode && process.env.NODE_ENV !== "test") {
+    storePath = path.join(userDataDir, "pennyworth-runtime-bootstrap-test.json");
+    if (fs.existsSync(storePath)) {
+      try {
+        fs.unlinkSync(storePath);
+      } catch (e) {
+        console.warn("Failed to clean bootstrap test store:", e.message);
+      }
+    }
+  } else {
+    storePath = path.join(userDataDir, "pennyworth-runtime.json");
+  }
   return storePath;
 }
 

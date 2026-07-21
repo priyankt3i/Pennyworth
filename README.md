@@ -185,3 +185,11 @@ Pennyworth includes **Hermes**, an agentic system handler designed as a safe rem
 ### Model Tool Calling Support
 *   **Local Models (Ollama)**: Upgraded `/api/chat` communication loop with Ollama to support native OpenAI-compatible tool specifications. Local offline models (like `llama3.2` or `qwen2.5-coder`) can call host tools as seamlessly as OpenAI and Gemini.
 *   **Commercial Models (OpenAI & Gemini)**: Native tool calling loop using Gemini Function Declarations and OpenAI Tool Definitions.
+
+### Advanced Capabilities & UI Refinements
+
+*   **Butler Persistent Memory Engine**: Equipped Hermes with `remember_fact` and `recall_facts` tools. Memories are saved on disk to a dedicated `pennyworth-memory.json` file in the user data folder. During startup, the backend automatically reads this file and injects all memories directly into the initial model prompt instructions, retaining facts about system changes, configurations, or preferences across restarts.
+*   **Live UI Activity Streaming**: Replaced static status indications with a dynamic event listener. The status bar in the bottom-left updates in real-time as trace events fire, detailing the exact action Hermes is taking (e.g. `Hermes is thinking...`, `Executing tool: execute_system_command...`, `Ready`).
+*   **Dynamic Stop Button & Cancellation Gates**: The chat button morphs into a red **Stop** button when busy. Clicking it halts execution immediately by raising an `AGENT_STOPPED` error at the next provider step boundary. Inputs are disabled while busy to prevent double-submit bugs.
+*   **Enterprise-Grade Credentials Fallback**: Integrates a secure fallback key management vault. If Electron's `keytar` native keychain fails to load (common in headless/minimal Linux configurations), it defaults to encrypting credentials locally using AES-256-CBC and a machine-derived key signature.
+*   **GitHub Actions CI Pipeline**: Configured a Node.js workflow `.github/workflows/test.yml` running headless unit tests (`npm test`) on Node v22 for every push and PR merge target to `main`, validating host profile matching, key encryption, and memory tool logic.

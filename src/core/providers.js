@@ -623,4 +623,5 @@ async function askWithFailover(providerState, context) {
 module.exports = {
   askWithFailover,
   cancelCurrentSession,
+  checkCancellation: process.env.NODE_ENV === "test" ? checkCancellation : undefined,
 };

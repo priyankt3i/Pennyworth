@@ -9,11 +9,12 @@ const path = require("path");
 const os = require("os");
 const { exec, execSync } = require("child_process");
 
-let dialog, BrowserWindow;
+let dialog, BrowserWindow, app;
 try {
   const electron = require("electron");
   dialog = electron.dialog;
   BrowserWindow = electron.BrowserWindow;
+  app = electron.app;
 } catch (e) {
   // Silent fallback if loaded outside Electron main process context (e.g., tests)
 }
@@ -850,6 +851,9 @@ function getSystemStatus(aspect = "all") {
 }
 
 function getMemoryFilePath() {
+  if (!app) {
+    return path.join(os.tmpdir(), "pennyworth-memory.json");
+  }
   return path.join(app.getPath("userData"), "pennyworth-memory.json");
 }
 

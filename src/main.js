@@ -1,6 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const os = require("os");
 const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, ipcMain, desktopCapturer } = require("electron");
 const axios = require("axios");
 const screenshot = require("screenshot-desktop");
@@ -1199,31 +1200,46 @@ ipcMain.handle("pennyworth:ask", async (_event, payload) => {
   }
 });
 
-app.whenReady().then(() => {
-  Menu.setApplicationMenu(null);
-  if (process.platform === "win32") {
-    app.setAppUserModelId("com.pennyworth.desktop");
-  }
-  if (process.platform === "darwin" && app.dock) {
-    const iconPath = resolveWindowIconPath();
-    if (iconPath) {
-      app.dock.setIcon(iconPath);
+if (process.env.NODE_ENV !== "test") {
+  app.whenReady().then(() => {
+    Menu.setApplicationMenu(null);
+    if (process.platform === "win32") {
+      app.setAppUserModelId("com.pennyworth.desktop");
     }
-  }
-  createWindow();
-  createTray();
-  registerShortcuts();
-});
+    if (process.platform === "darwin" && app.dock) {
+      const iconPath = resolveWindowIconPath();
+      if (iconPath) {
+        app.dock.setIcon(iconPath);
+      }
+    }
+    createWindow();
+    createTray();
+    registerShortcuts();
+  });
 
-app.on("will-quit", () => {
-  globalShortcut.unregisterAll();
-});
+  app.on("will-quit", () => {
+    globalShortcut.unregisterAll();
+  });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
+}
+
+if (process.env.NODE_ENV === "test") {
+  module.exports = {
+    autoDetectProfileId,
+    encrypt,
+    decrypt,
+    getStoredApiKey,
+    setStoredApiKey,
+    clearStoredApiKey,
+    storeGet,
+    storeSet,
+  };
+}
 
 
 

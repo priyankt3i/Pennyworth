@@ -1076,19 +1076,23 @@ ipcMain.handle("pennyworth:bootstrap-pull-model", async (_event, modelName) => {
   }
 });
 
+function bootstrapSetDefaultProvider(provider, model) {
+  const providerState = {
+    defaultProvider: provider,
+    providers: {
+      ollama: {
+        enabled: true,
+        model: model,
+      }
+    }
+  };
+  saveProviderState(providerState);
+  return { ok: true };
+}
+
 ipcMain.handle("pennyworth:bootstrap-set-default-provider", async (_event, provider, model) => {
   try {
-    const providerState = {
-      activeProvider: provider,
-      providers: {
-        ollama: {
-          enabled: true,
-          model: model,
-        }
-      }
-    };
-    saveProviderState(providerState);
-    return { ok: true };
+    return bootstrapSetDefaultProvider(provider, model);
   } catch (error) {
     return { ok: false, error: error.message };
   }
@@ -1538,6 +1542,8 @@ if (process.env.NODE_ENV === "test") {
     clearStoredApiKey,
     storeGet,
     storeSet,
+    bootstrapOllama: typeof bootstrapOllama !== "undefined" ? bootstrapOllama : undefined,
+    bootstrapSetDefaultProvider: typeof bootstrapSetDefaultProvider !== "undefined" ? bootstrapSetDefaultProvider : undefined,
   };
 }
 

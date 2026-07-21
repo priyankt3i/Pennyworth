@@ -1,5 +1,22 @@
-﻿const axios = require("axios");
+const axios = require("axios");
+const https = require("https");
+const customHttpsAgent = new https.Agent({
+  rejectUnauthorized: false,
+});
 const cheerio = require("cheerio");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { exec, execSync } = require("child_process");
+
+let dialog, BrowserWindow;
+try {
+  const electron = require("electron");
+  dialog = electron.dialog;
+  BrowserWindow = electron.BrowserWindow;
+} catch (e) {
+  // Silent fallback if loaded outside Electron main process context (e.g., tests)
+}
 
 const WEATHER_CODE_MAP = {
   0: "Clear sky",
@@ -85,6 +102,117 @@ const OPENAI_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "execute_system_command",
+      description: "Execute a shell command on the host system. Always check systemContext to ensure the command matches the operating system (e.g. bash for Linux, PowerShell/CMD for Windows). Sudo/root commands are allowed but will require user approval.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: {
+            type: "string",
+            description: "The exact shell command to execute.",
+          },
+        },
+        required: ["command"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_system_file",
+      description: "Read the text contents of a file on the host system (e.g. log files, configuration files, scripts). Reading highly sensitive files will prompt the user for permission.",
+      parameters: {
+        type: "object",
+        properties: {
+          filepath: {
+            type: "string",
+            description: "The absolute path to the file to read.",
+          },
+        },
+        required: ["filepath"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "write_system_file",
+      description: "Write or overwrite text content to a file on the host system. This will prompt the user for confirmation.",
+      parameters: {
+        type: "object",
+        properties: {
+          filepath: {
+            type: "string",
+            description: "The absolute path to the file to write.",
+          },
+          content: {
+            type: "string",
+            description: "The text contents to write into the file.",
+          },
+        },
+        required: ["filepath", "content"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_system_status",
+      description: "Retrieve live system resource status, disk usage, active processes, systemd services, or network interface info.",
+      parameters: {
+        type: "object",
+        properties: {
+          aspect: {
+            type: "string",
+            description: "Filter by specific system aspect: 'cpu', 'memory', 'disk', 'processes', 'services', 'network', or 'all'.",
+            enum: ["cpu", "memory", "disk", "processes", "services", "network", "all"],
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "remember_fact",
+      description: "Store a persistent memory or fact about the user, their preference, or actions taken on their system (e.g. package installations or configuration changes). This persists across app restarts.",
+      parameters: {
+        type: "object",
+        properties: {
+          fact: {
+            type: "string",
+            description: "The fact or information to remember.",
+          },
+        },
+        required: ["fact"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "recall_facts",
+      description: "Recall or search persistent memories and facts that were previously saved.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Optional search query to filter remembered facts.",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 const GEMINI_FUNCTION_DECLARATIONS = [
@@ -126,6 +254,93 @@ const GEMINI_FUNCTION_DECLARATIONS = [
         },
       },
       required: ["query"],
+    },
+  },
+  {
+    name: "execute_system_command",
+    description: "Execute a shell command on the host system. Check systemContext to match the OS (bash for Linux, PowerShell for Windows).",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        command: {
+          type: "STRING",
+          description: "The shell command to run.",
+        },
+      },
+      required: ["command"],
+    },
+  },
+  {
+    name: "read_system_file",
+    description: "Read the text contents of a file on the host system.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        filepath: {
+          type: "STRING",
+          description: "Absolute path to the file.",
+        },
+      },
+      required: ["filepath"],
+    },
+  },
+  {
+    name: "write_system_file",
+    description: "Write or overwrite text content to a file on the host system. Prompts the user for approval.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        filepath: {
+          type: "STRING",
+          description: "Absolute path to write to.",
+        },
+        content: {
+          type: "STRING",
+          description: "Content to write.",
+        },
+      },
+      required: ["filepath", "content"],
+    },
+  },
+  {
+    name: "get_system_status",
+    description: "Retrieve live system status (cpu, memory, disk, processes, services, network, or all).",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        aspect: {
+          type: "STRING",
+          description: "Filter by 'cpu', 'memory', 'disk', 'processes', 'services', 'network', or 'all'.",
+          enum: ["cpu", "memory", "disk", "processes", "services", "network", "all"],
+        },
+      },
+    },
+  },
+  {
+    name: "remember_fact",
+    description: "Store a persistent memory or fact about the user, their preference, or actions taken on their system. This persists across app restarts.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        fact: {
+          type: "STRING",
+          description: "The fact or information to remember.",
+        },
+      },
+      required: ["fact"],
+    },
+  },
+  {
+    name: "recall_facts",
+    description: "Recall or search persistent memories and facts that were previously saved.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        query: {
+          type: "STRING",
+          description: "Optional search query to filter remembered facts.",
+        },
+      },
     },
   },
 ];
@@ -191,7 +406,7 @@ function runSmallTalkTool(question) {
     return {
       handled: true,
       tool: "small_talk",
-      reply: "Always a pleasure. Summon me whenever you need backup.",
+      reply: "Always a pleasure. Open Pennyworth whenever you need backup.",
     };
   }
 
@@ -207,7 +422,7 @@ function runSmallTalkTool(question) {
     return {
       handled: true,
       tool: "small_talk",
-      reply: "Good day. Pennyworth at your service. What can I help you solve?",
+      reply: "Good day. Hermes at your service. What can I help you solve?",
     };
   }
 
@@ -245,6 +460,7 @@ async function geocodeLocation(locationText) {
       format: "json",
     },
     timeout: 7000,
+    httpsAgent: customHttpsAgent,
   });
 
   const first = response?.data?.results?.[0];
@@ -260,7 +476,10 @@ async function geocodeLocation(locationText) {
 }
 
 async function geolocateByIp() {
-  const response = await axios.get("https://ipapi.co/json/", { timeout: 7000 });
+  const response = await axios.get("https://ipapi.co/json/", {
+    timeout: 7000,
+    httpsAgent: customHttpsAgent,
+  });
   const body = response?.data || {};
 
   if (!body.latitude || !body.longitude) {
@@ -284,6 +503,7 @@ async function fetchWeather(latitude, longitude) {
       daily: ["temperature_2m_max", "temperature_2m_min", "weather_code"],
     },
     timeout: 7000,
+    httpsAgent: customHttpsAgent,
   });
 
   return response?.data || {};
@@ -336,6 +556,7 @@ async function duckDuckGoSearch(query, limit = 5) {
       "User-Agent": "Mozilla/5.0 (Pennyworth)",
     },
     timeout: 9000,
+    httpsAgent: customHttpsAgent,
   });
 
   const $ = cheerio.load(response.data || "");
@@ -451,6 +672,208 @@ async function runWebSearchTool(question, queryOverride) {
   };
 }
 
+// Hermes System Integration Helpers
+function requestUserApproval(title, message, detail) {
+  if (!dialog || !BrowserWindow) {
+    return true; // Auto-approve outside Electron (e.g. tests or command-line scripts)
+  }
+
+  const focusedWindow = BrowserWindow.getFocusedWindow();
+  const choice = dialog.showMessageBoxSync(focusedWindow || null, {
+    type: "warning",
+    buttons: ["Approve", "Deny"],
+    defaultId: 1, // Deny by default
+    cancelId: 1,  // Deny on escape
+    title: title,
+    message: message,
+    detail: detail,
+  });
+
+  return choice === 0;
+}
+
+function isSensitivePath(filepath) {
+  const normalized = path.normalize(filepath).toLowerCase();
+  const sensitivePatterns = [
+    "shadow",
+    "passwd",
+    "secret",
+    "keyring",
+    "private_key",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    ".env",
+    "credentials",
+    "config/providers.json", // Protect system LLM configuration
+    ".bash_history",
+    ".zsh_history",
+  ];
+  return sensitivePatterns.some((pattern) => normalized.includes(pattern));
+}
+
+function tryRunCommand(cmd) {
+  try {
+    return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true }).trim();
+  } catch (error) {
+    return `Failed to fetch info: ${error.message}`;
+  }
+}
+
+// Hermes Core System Tools
+async function executeSystemCommand(command) {
+  const approved = requestUserApproval(
+    "Execute System Command",
+    "Hermes Agent is requesting to execute a terminal command on your computer.",
+    `Command:\n${command}\n\nWARNING: Executing commands can alter system state, modify settings, or install packages.`
+  );
+
+  if (!approved) {
+    return "COMMAND_EXECUTION_DENIED: The user denied permission to run this command.";
+  }
+
+  return new Promise((resolve) => {
+    exec(command, { timeout: 45000, maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+      let output = "";
+      if (stdout) {
+        output += `--- STDOUT ---\n${stdout}\n`;
+      }
+      if (stderr) {
+        output += `--- STDERR ---\n${stderr}\n`;
+      }
+      if (error) {
+        output += `--- ERROR ---\nExit Code: ${error.code}\n${error.message}\n`;
+      }
+      resolve(output || "Command executed successfully but returned no output.");
+    });
+  });
+}
+
+async function readSystemFile(filepath) {
+  if (isSensitivePath(filepath)) {
+    const approved = requestUserApproval(
+      "Read Sensitive File",
+      "Hermes Agent is requesting to read a sensitive system file.",
+      `File path: ${filepath}\n\nWARNING: This file may contain user credentials, keys, or API tokens.`
+    );
+    if (!approved) {
+      return "FILE_READ_DENIED: The user denied permission to read this sensitive file.";
+    }
+  }
+
+  try {
+    const stats = fs.statSync(filepath);
+    if (stats.isDirectory()) {
+      return `Error: '${filepath}' is a directory, not a file.`;
+    }
+    if (stats.size > 1024 * 1024 * 5) {
+      return `Error: File is too large to read directly (${(stats.size / 1024 / 1024).toFixed(2)} MB).`;
+    }
+    const content = fs.readFileSync(filepath, "utf8");
+    return content || "(Empty file)";
+  } catch (error) {
+    return `Error reading file '${filepath}': ${error.message}`;
+  }
+}
+
+async function writeSystemFile(filepath, content) {
+  const approved = requestUserApproval(
+    "Write System File",
+    "Hermes Agent is requesting to write or overwrite a file on your computer.",
+    `File path: ${filepath}\n\nWARNING: Modifying system files can break applications or alter OS configurations.`
+  );
+
+  if (!approved) {
+    return "FILE_WRITE_DENIED: The user denied permission to write this file.";
+  }
+
+  try {
+    const dir = path.dirname(filepath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(filepath, content, "utf8");
+    return `Successfully wrote ${content.length} characters to '${filepath}'.`;
+  } catch (error) {
+    return `Error writing file '${filepath}': ${error.message}`;
+  }
+}
+
+function getSystemStatus(aspect = "all") {
+  const isWin = os.platform() === "win32";
+  const status = {};
+
+  if (aspect === "cpu" || aspect === "memory" || aspect === "all") {
+    status.resources = {
+      cpuCores: os.cpus().length,
+      cpuModel: os.cpus()[0]?.model || "unknown",
+      totalMemoryGb: (os.totalmem() / 1024 / 1024 / 1024).toFixed(2),
+      freeMemoryGb: (os.freemem() / 1024 / 1024 / 1024).toFixed(2),
+      loadAverage: os.platform() !== "win32" ? os.loadavg() : "N/A",
+    };
+  }
+
+  if (aspect === "disk" || aspect === "all") {
+    if (isWin) {
+      status.disk = tryRunCommand("powershell -NoProfile -Command \"Get-Volume | Select-Object DriveLetter, FileSystemLabel, SizeRemaining, Size | Format-Table\"");
+    } else {
+      status.disk = tryRunCommand("df -h /");
+    }
+  }
+
+  if (aspect === "processes" || aspect === "all") {
+    if (isWin) {
+      status.processes = tryRunCommand("powershell -NoProfile -Command \"Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 -Property Name, Id, CPU, WorkingSet | Format-Table\"");
+    } else {
+      status.processes = tryRunCommand("ps aux --sort=-%cpu | head -n 25");
+    }
+  }
+
+  if (aspect === "services" || aspect === "all") {
+    if (os.platform() === "linux") {
+      status.services = tryRunCommand("systemctl list-units --type=service --state=active --no-legend | head -n 30");
+    } else if (isWin) {
+      status.services = tryRunCommand("powershell -NoProfile -Command \"Get-Service | Where-Object {$_.Status -eq 'Running'} | Select-Object -First 20 -Property Name, DisplayName, Status | Format-Table\"");
+    } else {
+      status.services = "Not supported on this platform";
+    }
+  }
+
+  if (aspect === "network" || aspect === "all") {
+    status.network = {
+      interfaces: os.networkInterfaces(),
+    };
+  }
+
+  return JSON.stringify(status, null, 2);
+}
+
+function getMemoryFilePath() {
+  return path.join(app.getPath("userData"), "pennyworth-memory.json");
+}
+
+function readMemory() {
+  try {
+    const memoryPath = getMemoryFilePath();
+    if (fs.existsSync(memoryPath)) {
+      return JSON.parse(fs.readFileSync(memoryPath, "utf8"));
+    }
+  } catch (error) {
+    console.error("Failed to read butler memory:", error);
+  }
+  return [];
+}
+
+function writeMemory(memories) {
+  try {
+    const memoryPath = getMemoryFilePath();
+    fs.writeFileSync(memoryPath, JSON.stringify(memories, null, 2), "utf8");
+  } catch (error) {
+    console.error("Failed to write butler memory:", error);
+  }
+}
+
 async function executeToolFunction(name, args, runtimeContext) {
   const safeArgs = args && typeof args === "object" ? args : {};
   const systemContext = runtimeContext?.systemContext || { platform: "unknown" };
@@ -474,6 +897,61 @@ async function executeToolFunction(name, args, runtimeContext) {
   if (name === "web_search") {
     const result = await runWebSearchTool(question, safeArgs.query);
     return result.reply;
+  }
+
+  if (name === "execute_system_command") {
+    if (!safeArgs.command) {
+      return "Error: command argument is required.";
+    }
+    return await executeSystemCommand(safeArgs.command);
+  }
+
+  if (name === "read_system_file") {
+    if (!safeArgs.filepath) {
+      return "Error: filepath argument is required.";
+    }
+    return await readSystemFile(safeArgs.filepath);
+  }
+
+  if (name === "write_system_file") {
+    if (!safeArgs.filepath || safeArgs.content === undefined) {
+      return "Error: filepath and content arguments are required.";
+    }
+    return await writeSystemFile(safeArgs.filepath, safeArgs.content);
+  }
+
+  if (name === "get_system_status") {
+    return getSystemStatus(safeArgs.aspect || "all");
+  }
+
+  if (name === "remember_fact") {
+    const fact = String(safeArgs.fact || "").trim();
+    if (!fact) {
+      return "Error: No fact provided.";
+    }
+    const memories = readMemory();
+    memories.push({
+      at: new Date().toISOString(),
+      fact,
+    });
+    writeMemory(memories);
+    return `Successfully remembered fact: "${fact}"`;
+  }
+
+  if (name === "recall_facts") {
+    const query = String(safeArgs.query || "").trim().toLowerCase();
+    const memories = readMemory();
+    const filtered = query
+      ? memories.filter((m) => String(m.fact).toLowerCase().includes(query))
+      : memories;
+
+    if (!filtered.length) {
+      return query ? `No remembered facts match "${query}".` : "No remembered facts found.";
+    }
+
+    return filtered
+      .map((m) => `[${new Date(m.at).toLocaleString()}] ${m.fact}`)
+      .join("\n");
   }
 
   throw new Error(`Unknown tool '${name}'.`);

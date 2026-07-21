@@ -165,3 +165,23 @@ Keys entered in settings are stored via OS keychain integration (`keytar`) when 
 - Building Linux artifacts is most reliable on Linux hosts.
 - Screenshot behavior may vary by desktop/compositor (especially on Wayland).
 - For screenshot-aware answers, choose a vision-capable provider/model.
+
+## Hermes Agent: Agentic PC & Linux Handler
+
+Pennyworth includes **Hermes**, an agentic system handler designed as a safe remediation copilot. It allows the selected LLM to directly interact with, troubleshoot, and configure the host operating system.
+
+### Core Capabilities
+*   **Host System Identification**: Automatically reads platform type, distro profiles, architecture, kernel version, hardware resources, and present package managers (`pacman`, `yay`, `paru`, `apt`, `dnf`, `zypper`), and passes this to the LLM on every turn.
+*   **System execution & configuration tools**:
+    *   `execute_system_command`: Runs shell commands (supports bash/sh for Linux/macOS and PowerShell/CMD for Windows).
+    *   `read_system_file`: Inspects host files, configurations, and logs.
+    *   `write_system_file`: Generates script files and updates system configuration targets.
+    *   `get_system_status`: Inspects live host state (CPU model/utilization, free/total memory, disk volume size, running processes, active systemd services, and network adapters).
+
+### Safety & Approval Gate
+*   **Native Dialog Approvals**: To prevent unintended system modification, any invocation of `execute_system_command` or `write_system_file` calls Electron's native `dialog.showMessageBoxSync`, forcing the main execution thread to pause and request authorization from the user via a modal dialog window.
+*   **Sensitive Path Filter**: Attempts to read user credential patterns, private SSH keys (`id_rsa`), API config files, or shell histories via `read_system_file` are automatically intercepted and require explicit user authorization.
+
+### Model Tool Calling Support
+*   **Local Models (Ollama)**: Upgraded `/api/chat` communication loop with Ollama to support native OpenAI-compatible tool specifications. Local offline models (like `llama3.2` or `qwen2.5-coder`) can call host tools as seamlessly as OpenAI and Gemini.
+*   **Commercial Models (OpenAI & Gemini)**: Native tool calling loop using Gemini Function Declarations and OpenAI Tool Definitions.

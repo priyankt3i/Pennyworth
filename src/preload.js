@@ -1,4 +1,4 @@
-﻿const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("pennyworth", {
   getRuntimeConfig: () => ipcRenderer.invoke("pennyworth:get-runtime-config"),
@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld("pennyworth", {
   listDisplays: () => ipcRenderer.invoke("pennyworth:list-displays"),
   captureScreen: (payload) => ipcRenderer.invoke("pennyworth:capture-screen", payload),
   ask: (payload) => ipcRenderer.invoke("pennyworth:ask", payload),
+  cancelAgent: () => ipcRenderer.invoke("pennyworth:cancel-agent"),
+  onTraceEvent: (handler) => ipcRenderer.on("pennyworth:trace-event", (event, arg) => handler(arg)),
   windowMinimize: () => ipcRenderer.invoke("pennyworth:window-minimize"),
   windowMaximizeToggle: () => ipcRenderer.invoke("pennyworth:window-maximize-toggle"),
   windowClose: () => ipcRenderer.invoke("pennyworth:window-close"),

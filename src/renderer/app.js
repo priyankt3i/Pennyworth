@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   runtime: null,
   system: null,
   history: [],
@@ -9,6 +9,7 @@
   settings: null,
   captureDisplays: [],
   selectedDisplayKey: "",
+  captureSourceLabel: "",
   activeProviderTab: "ollama",
   clearApiKeys: {
     openai: false,
@@ -32,14 +33,18 @@ const el = {
   loader: document.getElementById("loader"),
   capturePreview: document.getElementById("capturePreview"),
   captureImage: document.getElementById("captureImage"),
+  captureInfo: document.getElementById("captureInfo"),
   clearCaptureBtn: document.getElementById("clearCaptureBtn"),
   cropModal: document.getElementById("cropModal"),
+  cropSelectionMeta: document.getElementById("cropSelectionMeta"),
   displaySelectorWrap: document.getElementById("displaySelectorWrap"),
   displaySelect: document.getElementById("displaySelect"),
+  resetCropBtn: document.getElementById("resetCropBtn"),
   cropCanvasWrap: document.getElementById("cropCanvasWrap"),
   cancelCropBtn: document.getElementById("cancelCropBtn"),
   confirmCropBtn: document.getElementById("confirmCropBtn"),
   subTitle: document.getElementById("subTitle"),
+  runtimePill: document.getElementById("runtimePill"),
   settingsBtn: document.getElementById("settingsBtn"),
   windowMinBtn: document.getElementById("windowMinBtn"),
   windowMaxBtn: document.getElementById("windowMaxBtn"),
@@ -70,23 +75,35 @@ const el = {
   geminiKeyStatus: document.getElementById("geminiKeyStatus"),
   cancelSettingsBtn: document.getElementById("cancelSettingsBtn"),
   saveSettingsBtn: document.getElementById("saveSettingsBtn"),
+  themeSelect: document.getElementById("themeSelect"),
 };
 
 function setStatus(text, mode = "info") {
   el.status.textContent = text;
-  el.status.style.fontWeight = "500";
-  if (mode === "error") {
-    el.status.style.color = "#ff9e94";
-  } else if (mode === "ok") {
-    el.status.style.color = "#0f6b2e";
-    el.status.style.fontWeight = "700";
-  } else {
-    el.status.style.color = "";
-  }
+  el.status.dataset.mode = mode;
 }
 
 function showLoader(show) {
   el.loader.classList.toggle("hidden", !show);
+}
+
+function setBusy(isBusy) {
+  state.isBusy = isBusy;
+  showLoader(isBusy);
+  
+  if (isBusy) {
+    el.sendBtn.textContent = "Stop";
+    el.sendBtn.dataset.action = "stop";
+    el.sendBtn.classList.add("stopping");
+  } else {
+    el.sendBtn.textContent = "Send";
+    el.sendBtn.dataset.action = "send";
+    el.sendBtn.classList.remove("stopping");
+  }
+
+  el.captureBtn.disabled = isBusy;
+  el.voiceBtn.disabled = isBusy;
+  el.promptInput.disabled = isBusy;
 }
 
 function appendMessage(role, text, meta) {
@@ -131,7 +148,7 @@ function renderMarkdown(input) {
   text = text.replace(/^###\s+(.+)$/gm, "<h4>$1</h4>");
   text = text.replace(/^##\s+(.+)$/gm, "<h3>$1</h3>");
   text = text.replace(/^#\s+(.+)$/gm, "<h2>$1</h2>");
-  text = text.replace(/^\s*-\s+(.+)$/gm, "• $1");
+  text = text.replace(/^\s*-\s+(.+)$/gm, "- $1");
   text = text.replace(/\n/g, "<br>");
 
   blocks.forEach((html, idx) => {
@@ -179,7 +196,7 @@ function renderProfileSelect() {
   el.profileSelect.innerHTML = "";
   const option = document.createElement("option");
   option.value = state.runtime.profileId;
-  option.textContent = `Auto target: ${state.runtime.profile.name}`;
+  option.textContent = state.runtime.profile.name;
   option.selected = true;
   el.profileSelect.appendChild(option);
 }
@@ -223,6 +240,10 @@ function showNoProviderGuidance(showInChat = false, detail = "") {
   const reason = detail ? ` Reason: ${detail}.` : "";
   const helpText = `No active provider is available (selected: ${active}). Open Settings, choose an LLM tab, and ensure it is connected.${reason}`;
   updateBadges("noprovider");
+  if (el.runtimePill) {
+    el.runtimePill.textContent = "provider offline";
+    el.runtimePill.dataset.mode = "error";
+  }
   setStatus(helpText, "error");
   if (showInChat) {
     appendMessage("assistant", helpText, "System");
@@ -239,6 +260,10 @@ function applyProviderAvailabilityUi(health = {}, showInChat = false) {
   const activeHealth = health?.[active];
   if (isProviderConnected(activeHealth)) {
     updateBadges(active);
+    if (el.runtimePill) {
+      el.runtimePill.textContent = `${active} ready`;
+      el.runtimePill.dataset.mode = "ok";
+    }
     return true;
   }
 
@@ -259,11 +284,11 @@ function updateTracePanelVisibility() {
     return;
   }
 
-  const show = isDevModeEnabled();
+  const show = Array.isArray(state.lastToolTrace) && state.lastToolTrace.length > 0;
   el.tracePanel.classList.toggle("hidden", !show);
 
   if (show && (!Array.isArray(state.lastToolTrace) || !state.lastToolTrace.length)) {
-    el.traceContent.textContent = "No tool calls captured yet.";
+    el.traceContent.textContent = "Agent starting...";
   }
 }
 
@@ -275,12 +300,8 @@ function renderToolTrace(toolTrace, providerLabel = "") {
   state.lastToolTrace = Array.isArray(toolTrace) ? toolTrace : [];
   updateTracePanelVisibility();
 
-  if (!isDevModeEnabled()) {
-    return;
-  }
-
   if (!state.lastToolTrace.length) {
-    el.traceContent.textContent = "No tool calls captured yet.";
+    el.traceContent.textContent = "Agent starting...";
     return;
   }
 
@@ -333,21 +354,39 @@ async function loadRuntime() {
   updateBadges();
   updateTracePanelVisibility();
 
-  el.subTitle.textContent = `${state.system.distro.prettyName} | ${state.system.desktop} | kernel ${state.system.kernel} | auto profile ${state.runtime.profile.name}`;
+  el.subTitle.textContent = `${state.system.distro.prettyName} / ${state.system.arch} / ${state.runtime.profile.name}`;
+  if (el.runtimePill) {
+    el.runtimePill.textContent = state.system.platform;
+    el.runtimePill.dataset.mode = "neutral";
+  }
+
+  const theme = state.runtime?.agentContext?.theme || "light";
+  document.body.classList.toggle("dark-theme", theme === "dark");
+  if (el.themeSelect) {
+    el.themeSelect.value = theme;
+  }
 }
 
-function setCapturedImage(dataUrl) {
+function setCapturedImage(dataUrl, label = "") {
   state.screenshotData = dataUrl;
+  state.captureSourceLabel = label;
   if (!dataUrl) {
     el.capturePreview.classList.add("hidden");
     el.captureImage.src = "";
+    if (el.captureInfo) {
+      el.captureInfo.textContent = "";
+    }
     return;
   }
   el.captureImage.src = dataUrl;
+  if (el.captureInfo) {
+    el.captureInfo.textContent = label || "Screenshot attached to next message";
+  }
   el.capturePreview.classList.remove("hidden");
 }
 
 function createCropCanvas(imageDataUrl) {
+  disposeCropSession(false);
   el.cropCanvasWrap.innerHTML = "";
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
@@ -474,7 +513,21 @@ function updateCropConfirmButton() {
   if (!el.confirmCropBtn) {
     return;
   }
-  el.confirmCropBtn.textContent = hasValidCropSelection() ? "Use Selected Region" : "Use Full Screenshot";
+  if (!hasValidCropSelection()) {
+    el.confirmCropBtn.textContent = "Use Full Screen";
+    if (el.cropSelectionMeta) {
+      el.cropSelectionMeta.textContent = "Full screenshot";
+    }
+    return;
+  }
+
+  const selection = state.crop.selection;
+  const width = Math.max(1, Math.floor(selection.w / state.crop.scale));
+  const height = Math.max(1, Math.floor(selection.h / state.crop.scale));
+  el.confirmCropBtn.textContent = "Use Selection";
+  if (el.cropSelectionMeta) {
+    el.cropSelectionMeta.textContent = `Selection ${width} x ${height}`;
+  }
 }
 
 function scheduleCropRedraw() {
@@ -552,23 +605,38 @@ function confirmCropSelection() {
     out.height
   );
 
-  setCapturedImage(out.toDataURL("image/png"));
+  setCapturedImage(out.toDataURL("image/png"), `Selected region - ${out.width} x ${out.height}`);
   closeCropModal();
   setStatus("Attached selected screenshot region.", "ok");
 }
 
-function closeCropModal() {
+function disposeCropSession(clearCanvas = true) {
   if (state.crop?.rafId) {
     window.cancelAnimationFrame(state.crop.rafId);
   }
   window.removeEventListener("pointermove", onCropMove);
   window.removeEventListener("pointerup", onCropEnd);
   window.removeEventListener("pointercancel", onCropEnd);
-  el.cropModal.classList.add("hidden");
   state.crop = null;
   state.drawing = false;
-  el.cropCanvasWrap.innerHTML = "";
+  if (clearCanvas) {
+    el.cropCanvasWrap.innerHTML = "";
+  }
   updateCropConfirmButton();
+}
+
+function closeCropModal() {
+  el.cropModal.classList.add("hidden");
+  disposeCropSession(true);
+}
+
+function resetCropSelection() {
+  if (!state.crop) {
+    return;
+  }
+  state.crop.selection = null;
+  state.crop.start = null;
+  redrawCropCanvas();
 }
 
 function toDisplayKey(id, fallbackIndex = 0) {
@@ -695,7 +763,7 @@ async function openCaptureModalForCurrentDisplay() {
       confirmCropSelection();
       return;
     }
-    setCapturedImage(dataUrl);
+    setCapturedImage(dataUrl, `Full screenshot - ${captured.sourceLabel}`);
     closeCropModal();
     setStatus(`Attached full screenshot from ${captured.sourceLabel}.`, "ok");
   };
@@ -949,6 +1017,9 @@ function populateSettingsForm(settingsPayload) {
   if (el.devMode) {
     el.devMode.checked = Boolean(agentContext.devMode);
   }
+  if (el.themeSelect) {
+    el.themeSelect.value = agentContext.theme || "light";
+  }
   updateTracePanelVisibility();
 
   el.ollamaBaseUrl.value = providerConfig.providers.ollama.baseUrl;
@@ -999,6 +1070,7 @@ async function saveSettings() {
       docsRootUrlOverride: el.docsRootOverride.value.trim(),
       allowIpLocation: el.allowIpLocation.checked,
       devMode: Boolean(el.devMode?.checked),
+      theme: el.themeSelect.value,
     },
     providerConfig: {
       defaultProvider: activeProvider,
@@ -1038,6 +1110,10 @@ async function saveSettings() {
       profiles: result.profiles,
       agentContext: result.agentContext,
     };
+
+    const theme = result.agentContext?.theme || "light";
+    document.body.classList.toggle("dark-theme", theme === "dark");
+
     populateSettingsForm(state.settings);
     await loadRuntime();
     closeSettingsModal();
@@ -1057,6 +1133,10 @@ async function saveSettings() {
 }
 
 async function askAgent() {
+  if (state.isBusy) {
+    return;
+  }
+
   const question = el.promptInput.value.trim();
   if (!question) {
     setStatus("Type a question first.", "error");
@@ -1068,17 +1148,20 @@ async function askAgent() {
     return;
   }
 
+  const historyBeforeAsk = state.history.slice();
   appendMessage("user", question, "You");
   state.history.push({ role: "user", content: question });
   el.promptInput.value = "";
 
-  showLoader(true);
+  state.lastToolTrace = [];
+  renderToolTrace([]);
+  setBusy(true);
   setStatus("Pennyworth is working...");
 
   try {
     const result = await window.pennyworth.ask({
       question,
-      history: state.history,
+      history: historyBeforeAsk,
       screenshotAttached: Boolean(state.screenshotData),
       screenshotData: state.screenshotData || null,
     });
@@ -1104,11 +1187,14 @@ async function askAgent() {
     renderToolTrace(result.toolTrace || [], result.provider);
 
     updateBadges(result.provider);
+    if (state.screenshotData) {
+      setCapturedImage(null);
+    }
     setStatus("Answer ready.", "ok");
   } catch (error) {
     reportFailure("Agent invocation failed:", error, true);
   } finally {
-    showLoader(false);
+    setBusy(false);
   }
 }
 
@@ -1164,6 +1250,21 @@ function registerGlobalErrorHandlers() {
   });
 }
 
+function registerKeyboardShortcuts() {
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+    if (!el.cropModal.classList.contains("hidden")) {
+      closeCropModal();
+      return;
+    }
+    if (!el.settingsModal.classList.contains("hidden")) {
+      closeSettingsModal();
+    }
+  });
+}
+
 async function invokeWindowControl(action, fallbackMessage) {
   try {
     if (!window.pennyworth || typeof action !== "function") {
@@ -1181,16 +1282,24 @@ async function invokeWindowControl(action, fallbackMessage) {
 
 async function init() {
   registerGlobalErrorHandlers();
+  registerKeyboardShortcuts();
   await loadRuntime();
   refreshProviderHealth(false, false);
 
+  const systemName = state.system?.distro?.prettyName || state.system?.platform || "PC";
   appendMessage(
     "assistant",
-    "At your service. Summon me with terminal errors, config headaches, and system gremlins.",
-    "Pennyworth"
+    `Hermes Agent ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
+    "Hermes"
   );
 
-  el.sendBtn.addEventListener("click", askAgent);
+  el.sendBtn.addEventListener("click", () => {
+    if (el.sendBtn.dataset.action === "stop") {
+      stopAgent();
+    } else {
+      askAgent();
+    }
+  });
   el.captureBtn.addEventListener("click", captureScreenFlow);
   el.voiceBtn.addEventListener("click", startVoiceInput);
   el.settingsBtn.addEventListener("click", openSettingsModal);
@@ -1216,7 +1325,9 @@ async function init() {
   el.promptInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      askAgent();
+      if (!state.isBusy) {
+        askAgent();
+      }
     }
   });
 
@@ -1224,6 +1335,41 @@ async function init() {
     setCapturedImage(null);
     setStatus("Screenshot cleared.");
   });
+
+  window.pennyworth.onTraceEvent((event) => {
+    if (!Array.isArray(state.lastToolTrace)) {
+      state.lastToolTrace = [];
+    }
+    state.lastToolTrace.push(event);
+    renderToolTrace(state.lastToolTrace, event.provider);
+
+    if (event.stage === "model_tool_request") {
+      setStatus(`Hermes requesting: ${event.tool}...`);
+    } else if (event.stage === "tool_exec_start") {
+      setStatus(`Executing tool: ${event.tool}...`);
+    } else if (event.stage === "tool_exec_result") {
+      setStatus(`Execution complete: ${event.tool}.`);
+    } else if (event.stage === "tool_exec_error") {
+      setStatus(`Tool error: ${event.tool} failed.`, "error");
+    } else if (event.stage === "provider_attempt") {
+      setStatus("Hermes is thinking...");
+    } else if (event.stage === "final_response") {
+      setStatus("Ready");
+    }
+  });
+
+  async function stopAgent() {
+    setStatus("Stopping agent...");
+    try {
+      await window.pennyworth.cancelAgent();
+    } catch (err) {
+      console.error("Cancel agent error:", err);
+      setStatus("Failed to stop agent.", "error");
+    }
+  }
+  if (el.resetCropBtn) {
+    el.resetCropBtn.addEventListener("click", resetCropSelection);
+  }
 
   if (el.displaySelect) {
     el.displaySelect.addEventListener("change", async () => {
@@ -1304,7 +1450,7 @@ async function init() {
 
   window.pennyworth.onSummoned(() => {
     el.promptInput.focus();
-    setStatus("Summoned.", "ok");
+    setStatus("Ready.", "ok");
   });
 }
 

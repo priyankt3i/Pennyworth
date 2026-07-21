@@ -804,6 +804,141 @@ function runtimeState() {
   };
 }
 
+const SESSIONS_DIR = path.join(app.getPath("userData"), "sessions");
+fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+
+function getSessionFilePath(sessionId) {
+  return path.join(SESSIONS_DIR, `${sessionId}.json`);
+}
+
+function listSessions() {
+  try {
+    const files = fs.readdirSync(SESSIONS_DIR);
+    const list = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const raw = fs.readFileSync(path.join(SESSIONS_DIR, file), "utf8");
+        const parsed = JSON.parse(raw);
+        list.push({
+          id: parsed.id,
+          title: parsed.title || "Untitled Chat",
+          createdAt: parsed.createdAt,
+          updatedAt: parsed.updatedAt || parsed.createdAt,
+        });
+      } catch (e) {
+        console.warn(`Failed to parse session file ${file}:`, e.message);
+      }
+    }
+    return list.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  } catch (error) {
+    console.error("Failed to list sessions:", error);
+    return [];
+  }
+}
+
+function loadSession(sessionId) {
+  try {
+    const filePath = getSessionFilePath(sessionId);
+    if (fs.existsSync(filePath)) {
+      const raw = fs.readFileSync(filePath, "utf8");
+      return JSON.parse(raw);
+    }
+  } catch (error) {
+    console.error(`Failed to load session ${sessionId}:`, error);
+  }
+  return null;
+}
+
+function saveSessionMessage(sessionId, messagePayload) {
+  try {
+    const filePath = getSessionFilePath(sessionId);
+    let session = {
+      id: sessionId,
+      title: "Untitled Chat",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
+    };
+    if (fs.existsSync(filePath)) {
+      session = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    }
+
+    session.messages.push(messagePayload);
+    session.updatedAt = new Date().toISOString();
+
+    if (session.title === "Untitled Chat" && messagePayload.role === "user") {
+      const prompt = messagePayload.content;
+      session.title = prompt.length > 30 ? `${prompt.slice(0, 30)}...` : prompt;
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(session, null, 2), "utf8");
+    return session;
+  } catch (error) {
+    console.error(`Failed to save message for session ${sessionId}:`, error);
+    return null;
+  }
+}
+
+function deleteSession(sessionId) {
+  try {
+    const filePath = getSessionFilePath(sessionId);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      return true;
+    }
+  } catch (error) {
+    console.error(`Failed to delete session ${sessionId}:`, error);
+  }
+  return false;
+}
+
+ipcMain.handle("pennyworth:list-sessions", async () => {
+  try {
+    return { ok: true, sessions: listSessions() };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("pennyworth:load-session", async (_event, sessionId) => {
+  try {
+    const session = loadSession(sessionId);
+    if (session) {
+      return { ok: true, session };
+    }
+    return { ok: false, error: "Session not found." };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("pennyworth:new-session", async () => {
+  try {
+    const sessionId = crypto.randomUUID();
+    const session = {
+      id: sessionId,
+      title: "Untitled Chat",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
+    };
+    fs.writeFileSync(getSessionFilePath(sessionId), JSON.stringify(session, null, 2), "utf8");
+    return { ok: true, sessionId, session };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("pennyworth:delete-session", async (_event, sessionId) => {
+  try {
+    const success = deleteSession(sessionId);
+    return { ok: success };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
 ipcMain.handle("pennyworth:get-runtime-config", async () => {
   try {
     const state = runtimeState();
@@ -1145,8 +1280,10 @@ ipcMain.handle("pennyworth:cancel-agent", async () => {
   }
 });
 
+
+
 ipcMain.handle("pennyworth:ask", async (_event, payload) => {
-  const { question, history = [], screenshotAttached = false, screenshotData = null } = payload || {};
+  const { question, history = [], screenshotAttached = false, screenshotData = null, sessionId } = payload || {};
   if (!question || !question.trim()) {
     return {
       ok: false,
@@ -1172,6 +1309,10 @@ ipcMain.handle("pennyworth:ask", async (_event, payload) => {
       console.warn("Failed to load memory file for prompt injection:", e.message);
     }
 
+    if (sessionId) {
+      saveSessionMessage(sessionId, { role: "user", content: question });
+    }
+
     const answer = await askWithFailover(providerState, {
       userPrompt: question,
       history,
@@ -1183,6 +1324,10 @@ ipcMain.handle("pennyworth:ask", async (_event, payload) => {
       retrievedDocs,
       memories,
     });
+
+    if (sessionId) {
+      saveSessionMessage(sessionId, { role: "assistant", content: answer.reply });
+    }
 
     return {
       ok: true,

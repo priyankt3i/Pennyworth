@@ -16,6 +16,8 @@ const state = {
     gemini: false,
   },
   providerHealth: null,
+  activeSessionId: null,
+  sessions: [],
 };
 
 const el = {
@@ -76,6 +78,9 @@ const el = {
   cancelSettingsBtn: document.getElementById("cancelSettingsBtn"),
   saveSettingsBtn: document.getElementById("saveSettingsBtn"),
   themeSelect: document.getElementById("themeSelect"),
+  toggleSidebarBtn: document.getElementById("toggleSidebarBtn"),
+  newChatBtn: document.getElementById("newChatBtn"),
+  sessionsList: document.getElementById("sessionsList"),
 };
 
 function setStatus(text, mode = "info") {
@@ -104,6 +109,153 @@ function setBusy(isBusy) {
   el.captureBtn.disabled = isBusy;
   el.voiceBtn.disabled = isBusy;
   el.promptInput.disabled = isBusy;
+}
+
+function clearChatDisplay() {
+  el.chat.innerHTML = "";
+}
+
+function renderSessionsList() {
+  if (!el.sessionsList) return;
+  el.sessionsList.innerHTML = "";
+
+  state.sessions.forEach((session) => {
+    const item = document.createElement("div");
+    item.className = `session-item${session.id === state.activeSessionId ? " active" : ""}`;
+    item.dataset.id = session.id;
+
+    const title = document.createElement("span");
+    title.className = "session-title";
+    title.textContent = session.title || "Untitled Chat";
+    item.appendChild(title);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "delete-session-btn";
+    deleteBtn.innerHTML = "🗑";
+    deleteBtn.title = "Delete Chat";
+    deleteBtn.type = "button";
+    
+    deleteBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await deleteSessionFlow(session.id);
+    });
+
+    item.appendChild(deleteBtn);
+
+    item.addEventListener("click", () => {
+      if (session.id !== state.activeSessionId) {
+        switchSessionFlow(session.id);
+      }
+    });
+
+    el.sessionsList.appendChild(item);
+  });
+}
+
+async function loadSessionsFlow() {
+  try {
+    const result = await window.pennyworth.listSessions();
+    if (result.ok) {
+      state.sessions = result.sessions || [];
+      renderSessionsList();
+    }
+  } catch (error) {
+    console.error("Failed to load sessions:", error);
+  }
+}
+
+async function switchSessionFlow(sessionId) {
+  try {
+    setBusy(true);
+    setStatus("Loading conversation...");
+    const result = await window.pennyworth.loadSession(sessionId);
+    if (result.ok) {
+      state.activeSessionId = sessionId;
+      state.history = result.session.messages || [];
+      
+      clearChatDisplay();
+      
+      state.history.forEach((msg) => {
+        const label = msg.role === "user" ? "You" : "Hermes";
+        appendMessage(msg.role, msg.content, label);
+      });
+
+      if (state.history.length === 0) {
+        const systemName = state.system?.distro?.prettyName || state.system?.platform || "PC";
+        appendMessage(
+          "assistant",
+          `Hermes Agent ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
+          "Hermes"
+        );
+      }
+
+      renderSessionsList();
+      setStatus("Ready");
+    } else {
+      setStatus("Failed to load session.", "error");
+    }
+  } catch (error) {
+    console.error("Failed to switch session:", error);
+    setStatus("Error loading session.", "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function createNewSessionFlow() {
+  try {
+    setBusy(true);
+    setStatus("Creating new chat...");
+    const result = await window.pennyworth.newSession();
+    if (result.ok) {
+      state.activeSessionId = result.sessionId;
+      state.history = [];
+      clearChatDisplay();
+
+      const systemName = state.system?.distro?.prettyName || state.system?.platform || "PC";
+      appendMessage(
+        "assistant",
+        `Hermes Agent ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
+        "Hermes"
+      );
+
+      await loadSessionsFlow();
+      setStatus("New chat ready.");
+    } else {
+      setStatus("Failed to create new chat.", "error");
+    }
+  } catch (error) {
+    console.error("Failed to create new session:", error);
+    setStatus("Error creating new chat.", "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function deleteSessionFlow(sessionId) {
+  const confirmDelete = confirm("Are you sure you want to delete this chat session?");
+  if (!confirmDelete) return;
+
+  try {
+    setStatus("Deleting chat...");
+    const result = await window.pennyworth.deleteSession(sessionId);
+    if (result.ok) {
+      await loadSessionsFlow();
+      if (state.activeSessionId === sessionId) {
+        if (state.sessions.length > 0) {
+          await switchSessionFlow(state.sessions[0].id);
+        } else {
+          await createNewSessionFlow();
+        }
+      }
+      setStatus("Chat deleted.");
+    } else {
+      setStatus("Failed to delete chat.", "error");
+    }
+  } catch (error) {
+    console.error("Failed to delete session:", error);
+    setStatus("Error deleting chat.", "error");
+  }
 }
 
 function appendMessage(role, text, meta) {
@@ -1164,6 +1316,7 @@ async function askAgent() {
       history: historyBeforeAsk,
       screenshotAttached: Boolean(state.screenshotData),
       screenshotData: state.screenshotData || null,
+      sessionId: state.activeSessionId,
     });
 
     if (!result.ok) {
@@ -1186,6 +1339,7 @@ async function askAgent() {
     state.history.push({ role: "assistant", content: result.reply });
     renderToolTrace(result.toolTrace || [], result.provider);
 
+    await loadSessionsFlow();
     updateBadges(result.provider);
     if (state.screenshotData) {
       setCapturedImage(null);
@@ -1286,12 +1440,22 @@ async function init() {
   await loadRuntime();
   refreshProviderHealth(false, false);
 
-  const systemName = state.system?.distro?.prettyName || state.system?.platform || "PC";
-  appendMessage(
-    "assistant",
-    `Hermes Agent ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
-    "Hermes"
-  );
+  if (el.toggleSidebarBtn) {
+    el.toggleSidebarBtn.addEventListener("click", () => {
+      document.querySelector(".app-shell").classList.toggle("sidebar-collapsed");
+    });
+  }
+
+  if (el.newChatBtn) {
+    el.newChatBtn.addEventListener("click", createNewSessionFlow);
+  }
+
+  await loadSessionsFlow();
+  if (state.sessions.length > 0) {
+    await switchSessionFlow(state.sessions[0].id);
+  } else {
+    await createNewSessionFlow();
+  }
 
   el.sendBtn.addEventListener("click", () => {
     if (el.sendBtn.dataset.action === "stop") {

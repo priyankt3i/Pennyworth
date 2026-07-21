@@ -17,4 +17,8 @@ contextBridge.exposeInMainWorld("pennyworth", {
   windowMaximizeToggle: () => ipcRenderer.invoke("pennyworth:window-maximize-toggle"),
   windowClose: () => ipcRenderer.invoke("pennyworth:window-close"),
   onSummoned: (handler) => ipcRenderer.on("pennyworth:summoned", handler),
+  listSessions: () => ipcRenderer.invoke("pennyworth:list-sessions"),
+  loadSession: (sessionId) => ipcRenderer.invoke("pennyworth:load-session", sessionId),
+  newSession: () => ipcRenderer.invoke("pennyworth:new-session"),
+  deleteSession: (sessionId) => ipcRenderer.invoke("pennyworth:delete-session", sessionId),
 });

@@ -704,14 +704,17 @@ select:disabled {
 
 .loader {
   position: fixed;
-  inset: 0;
-  z-index: 999;
-  display: grid;
-  place-content: center;
-  gap: 16px;
-  text-align: center;
-  color: var(--text);
-  background: var(--overlay);
+  bottom: 120px;
+  right: 24px;
+  z-index: 99;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
@@ -719,13 +722,12 @@ select:disabled {
 .loader p {
   margin: 0;
   color: var(--text);
-  font-size: 0.95rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  letter-spacing: -0.01em;
 }
 
 .loader-bar {
-  width: 200px;
+  width: 80px;
   height: 4px;
   overflow: hidden;
   border-radius: 8px;

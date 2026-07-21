@@ -48,6 +48,7 @@ Module.prototype.require = function(id) {
 
 // Set test environment variables
 process.env.NODE_ENV = "test";
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 // Load project modules
 const mainModule = require("../main");

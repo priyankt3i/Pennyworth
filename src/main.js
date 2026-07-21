@@ -1,9 +1,8 @@
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const os = require("os");
-const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, ipcMain, desktopCapturer } = require("electron");
+const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, ipcMain, desktopCapturer, safeStorage } = require("electron");
 const axios = require("axios");
 const screenshot = require("screenshot-desktop");
 const { exec, execSync } = require("child_process");
@@ -14,16 +13,8 @@ const { retrieveContext } = require("./core/rag");
 const { askWithFailover } = require("./core/providers");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
-const KEYTAR_SERVICE = "pennyworth-desktop";
 const ICON_PNG_PATH = path.join(ROOT_DIR, "public", "pennyworth.png");
 const ICON_ICO_PATH = path.join(ROOT_DIR, "public", "pennyworth.ico");
-
-let keytar = null;
-try {
-  keytar = require("keytar");
-} catch (error) {
-  keytar = null;
-}
 
 let mainWindow;
 let tray;
@@ -257,6 +248,7 @@ function registerShortcuts() {
 function normalizeProviderState(base, override) {
   const merged = {
     defaultProvider: override?.defaultProvider || base?.defaultProvider || "ollama",
+    customCaCertPath: override?.customCaCertPath || base?.customCaCertPath || "",
     providers: {
       ollama: {
         ...base?.providers?.ollama,
@@ -409,9 +401,21 @@ async function bootstrapOllama() {
   }
 }
 
+let sessionEncryptionKey = null;
+
+function deriveKeyFromPassphrase(passphrase) {
+  const salt = "pennyworth-vault-salt-secure-unique-string-1337";
+  return crypto.pbkdf2Sync(passphrase, salt, 100000, 32, "sha256");
+}
+
 function getEncryptionKey() {
-  const info = os.hostname() + os.arch() + os.platform() + (os.userInfo()?.username || "pennyworth");
-  return crypto.createHash("sha256").update(info).digest();
+  if (process.env.NODE_ENV === "test") {
+    return deriveKeyFromPassphrase("test-suite-passphrase");
+  }
+  if (!sessionEncryptionKey) {
+    throw new Error("VAULT_LOCKED");
+  }
+  return sessionEncryptionKey;
 }
 
 function encrypt(text) {
@@ -423,8 +427,8 @@ function encrypt(text) {
     encrypted += cipher.final("hex");
     return `${iv.toString("hex")}:${encrypted}`;
   } catch (error) {
-    console.error("Encryption failed:", error);
-    return "";
+    console.error("Encryption failed:", error.message);
+    throw error;
   }
 }
 
@@ -442,52 +446,58 @@ function decrypt(encryptedText) {
     decrypted += decipher.final("utf8");
     return decrypted;
   } catch (error) {
-    console.error("Decryption failed:", error);
-    return "";
+    console.error("Decryption failed:", error.message);
+    throw error;
   }
 }
 
 async function getStoredApiKey(account) {
-  if (keytar) {
-    try {
-      const key = await keytar.getPassword(KEYTAR_SERVICE, account);
-      if (key) return key;
-    } catch (e) {
-      console.warn("Keytar read failed, using fallback storage:", e.message);
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      const encryptedHex = storeGet(`secret_${account}`);
+      if (encryptedHex) {
+        const buffer = Buffer.from(encryptedHex, "hex");
+        return safeStorage.decryptString(buffer);
+      }
+      return "";
     }
+  } catch (error) {
+    console.warn("safeStorage read failed, falling back to local vault:", error.message);
   }
 
-  const encrypted = storeGet(`secret_${account}`);
+  // Fallback to local passphrase vault
+  const encrypted = storeGet(`secret_fallback_${account}`);
   if (encrypted) {
-    return decrypt(encrypted);
+    try {
+      return decrypt(encrypted);
+    } catch (e) {
+      return "";
+    }
   }
   return "";
 }
 
 async function setStoredApiKey(account, value) {
-  if (keytar) {
-    try {
-      await keytar.setPassword(KEYTAR_SERVICE, account, value);
-      storeSet(`secret_${account}`, undefined);
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      const buffer = safeStorage.encryptString(value);
+      storeSet(`secret_${account}`, buffer.toString("hex"));
+      storeSet(`secret_fallback_${account}`, undefined);
       return;
-    } catch (e) {
-      console.warn("Keytar write failed, using fallback storage:", e.message);
     }
+  } catch (error) {
+    console.warn("safeStorage write failed, falling back to local vault:", error.message);
   }
 
+  // Fallback to local passphrase vault
   const encrypted = encrypt(value);
-  storeSet(`secret_${account}`, encrypted);
+  storeSet(`secret_fallback_${account}`, encrypted);
+  storeSet(`secret_${account}`, undefined);
 }
 
 async function clearStoredApiKey(account) {
-  if (keytar) {
-    try {
-      await keytar.deletePassword(KEYTAR_SERVICE, account);
-    } catch (e) {
-      console.warn("Keytar clear failed:", e.message);
-    }
-  }
   storeSet(`secret_${account}`, undefined);
+  storeSet(`secret_fallback_${account}`, undefined);
 }
 
 function hasEnvKeyForProvider(providerName) {
@@ -508,7 +518,7 @@ async function getProviderStateForUi() {
   const geminiStored = Boolean(await getStoredApiKey("gemini"));
 
   return {
-    secureStorageAvailable: Boolean(keytar),
+    secureStorageAvailable: safeStorage.isEncryptionAvailable(),
     defaultProvider: providerState.defaultProvider,
     providers: {
       ollama: {
@@ -1046,6 +1056,57 @@ ipcMain.handle("pennyworth:delete-session", async (_event, sessionId) => {
     return { ok: success };
   } catch (error) {
     return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("pennyworth:vault-status", async () => {
+  try {
+    const hasSafeStorage = safeStorage.isEncryptionAvailable();
+    const isSetup = Boolean(storeGet("vaultSentinel"));
+    const isLocked = !hasSafeStorage && !sessionEncryptionKey;
+    return { ok: true, hasKeytar: false, hasSafeStorage, isSetup, isLocked };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("pennyworth:vault-setup", async (_event, passphrase) => {
+  try {
+    if (!passphrase || passphrase.length < 8) {
+      throw new Error("Passphrase must be at least 8 characters long.");
+    }
+    sessionEncryptionKey = deriveKeyFromPassphrase(passphrase);
+    const sentinel = encrypt("pennyworth-vault-unlocked-sentinel");
+    storeSet("vaultSentinel", sentinel);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("pennyworth:vault-unlock", async (_event, passphrase) => {
+  try {
+    const sentinel = storeGet("vaultSentinel");
+    if (!sentinel) {
+      throw new Error("Vault is not initialized.");
+    }
+    const tempKey = deriveKeyFromPassphrase(passphrase);
+    
+    const parts = sentinel.split(":");
+    const iv = Buffer.from(parts[0], "hex");
+    const encrypted = parts[1];
+    const decipher = crypto.createDecipheriv("aes-256-cbc", tempKey, iv);
+    let decrypted = decipher.update(encrypted, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+
+    if (decrypted === "pennyworth-vault-unlocked-sentinel") {
+      sessionEncryptionKey = tempKey;
+      return { ok: true };
+    } else {
+      throw new Error("Incorrect master passphrase.");
+    }
+  } catch (error) {
+    return { ok: false, error: error.message || "Incorrect master passphrase." };
   }
 });
 

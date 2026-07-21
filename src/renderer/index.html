@@ -233,6 +233,29 @@
           </div>
         </section>
 
+        <section class="settings-section">
+          <h3>Network & Security Hardening</h3>
+          <div class="settings-grid">
+            <label for="customCaCertPath">Root CA Certificate PEM Path</label>
+            <input id="customCaCertPath" type="text" placeholder="e.g. C:/path/to/corporate-ca.pem" />
+          </div>
+
+          <div class="vault-settings-card" style="border:1px solid var(--border); padding:14px; border-radius:8px; background:rgba(0,0,0,0.02); text-align:left; margin-top:16px;">
+            <strong style="color:var(--text); font-size:0.9rem; display:block; margin-bottom:4px;">Local Credential Encryption Vault</strong>
+            <span style="font-size:0.78rem; color:var(--muted); display:block; margin-bottom:12px;" id="vaultStatusText">Checking vault status...</span>
+            
+            <div id="vaultSetupArea" class="hidden" style="display:flex; flex-direction:column; gap:8px;">
+              <input id="vaultSetupPassphrase" class="no-drag" type="password" placeholder="Choose a Master Passphrase (min 8 chars)" style="padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--bg-elevated); color:var(--text);" />
+              <button id="vaultSetupBtn" class="no-drag" type="button" style="background:var(--accent); color:white; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.8rem;">Initialize Secure Vault</button>
+            </div>
+            
+            <div id="vaultUnlockArea" class="hidden" style="display:flex; flex-direction:column; gap:8px;">
+              <input id="vaultUnlockPassphrase" class="no-drag" type="password" placeholder="Enter Master Passphrase" style="padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--bg-elevated); color:var(--text);" />
+              <button id="vaultUnlockBtn" class="no-drag" type="button" style="background:var(--accent); color:white; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.8rem;">Unlock Vault</button>
+            </div>
+          </div>
+        </section>
+
         <div class="settings-key-status">
           <span id="ollamaStatus" class="badge"></span>
           <span id="openaiKeyStatus" class="badge"></span>

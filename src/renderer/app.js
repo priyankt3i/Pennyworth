@@ -90,6 +90,14 @@ const el = {
   clearNotificationsBtn: document.getElementById("clearNotificationsBtn"),
   notificationsList: document.getElementById("notificationsList"),
   toastContainer: document.getElementById("toastContainer"),
+  customCaCertPath: document.getElementById("customCaCertPath"),
+  vaultStatusText: document.getElementById("vaultStatusText"),
+  vaultSetupArea: document.getElementById("vaultSetupArea"),
+  vaultSetupPassphrase: document.getElementById("vaultSetupPassphrase"),
+  vaultSetupBtn: document.getElementById("vaultSetupBtn"),
+  vaultUnlockArea: document.getElementById("vaultUnlockArea"),
+  vaultUnlockPassphrase: document.getElementById("vaultUnlockPassphrase"),
+  vaultUnlockBtn: document.getElementById("vaultUnlockBtn"),
 };
 
 function setStatus(text, mode = "info") {
@@ -1416,6 +1424,36 @@ function closeSettingsModal() {
   el.settingsModal.classList.add("hidden");
 }
 
+async function refreshVaultStatus() {
+  if (!el.vaultStatusText) return;
+  try {
+    const res = await window.pennyworth.vaultStatus();
+    if (res.ok) {
+      if (res.hasSafeStorage) {
+        el.vaultStatusText.textContent = "Status: Secure OS Keychain (safeStorage) connected. Local vault encryption passphrase is not required.";
+        el.vaultSetupArea.classList.add("hidden");
+        el.vaultUnlockArea.classList.add("hidden");
+      } else if (!res.isSetup) {
+        el.vaultStatusText.textContent = "Status: Secure keychain unavailable and Local Vault not initialized. Setting up local cloud keys requires initializing an encryption vault passphrase.";
+        el.vaultSetupArea.classList.remove("hidden");
+        el.vaultUnlockArea.classList.add("hidden");
+      } else if (res.isLocked) {
+        el.vaultStatusText.textContent = "Status: Local Vault is locked. Enter your master passphrase to unlock credentials.";
+        el.vaultSetupArea.classList.add("hidden");
+        el.vaultUnlockArea.classList.remove("hidden");
+      } else {
+        el.vaultStatusText.textContent = "Status: Local Vault is unlocked. API keys are ready.";
+        el.vaultSetupArea.classList.add("hidden");
+        el.vaultUnlockArea.classList.add("hidden");
+      }
+    } else {
+      el.vaultStatusText.textContent = `Status Check Error: ${res.error}`;
+    }
+  } catch (err) {
+    el.vaultStatusText.textContent = `Failed to query vault: ${err.message}`;
+  }
+}
+
 function populateSettingsForm(settingsPayload) {
   const providerConfig = settingsPayload.providerConfig;
   const agentContext = settingsPayload.agentContext || {};
@@ -1434,6 +1472,10 @@ function populateSettingsForm(settingsPayload) {
   if (el.themeSelect) {
     el.themeSelect.value = agentContext.theme || "light";
   }
+  if (el.customCaCertPath) {
+    el.customCaCertPath.value = providerConfig.customCaCertPath || "";
+  }
+  refreshVaultStatus();
   updateTracePanelVisibility();
 
   el.ollamaBaseUrl.value = providerConfig.providers.ollama.baseUrl;
@@ -1488,6 +1530,7 @@ async function saveSettings() {
     },
     providerConfig: {
       defaultProvider: activeProvider,
+      customCaCertPath: el.customCaCertPath.value.trim(),
       providers: {
         ollama: {
           enabled: activeProvider === "ollama",
@@ -1753,6 +1796,48 @@ async function init() {
   }
   if (el.clearNotificationsBtn) {
     el.clearNotificationsBtn.addEventListener("click", clearNotifications);
+  }
+  if (el.vaultSetupBtn) {
+    el.vaultSetupBtn.addEventListener("click", async () => {
+      const passphrase = el.vaultSetupPassphrase.value;
+      if (!passphrase || passphrase.length < 8) {
+        alert("Passphrase must be at least 8 characters long.");
+        return;
+      }
+      try {
+        const res = await window.pennyworth.vaultSetup(passphrase);
+        if (res.ok) {
+          alert("Vault initialized successfully.");
+          el.vaultSetupPassphrase.value = "";
+          refreshVaultStatus();
+        } else {
+          alert(`Vault setup failed: ${res.error}`);
+        }
+      } catch (err) {
+        alert(`Vault setup error: ${err.message}`);
+      }
+    });
+  }
+  if (el.vaultUnlockBtn) {
+    el.vaultUnlockBtn.addEventListener("click", async () => {
+      const passphrase = el.vaultUnlockPassphrase.value;
+      if (!passphrase) {
+        alert("Please enter your passphrase.");
+        return;
+      }
+      try {
+        const res = await window.pennyworth.vaultUnlock(passphrase);
+        if (res.ok) {
+          alert("Vault unlocked successfully.");
+          el.vaultUnlockPassphrase.value = "";
+          refreshVaultStatus();
+        } else {
+          alert(`Unlock failed: ${res.error}`);
+        }
+      } catch (err) {
+        alert(`Unlock error: ${err.message}`);
+      }
+    });
   }
   if (el.windowMinBtn) {
     el.windowMinBtn.addEventListener("click", () => {

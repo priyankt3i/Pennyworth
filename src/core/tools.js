@@ -722,13 +722,116 @@ function tryRunCommand(cmd) {
   }
 }
 
+function assessCommandRisk(command) {
+  const normalized = command.trim().toLowerCase();
+  
+  // 1. Critical Blocklist (Risk 4 - Blocked)
+  const blockedPatterns = [
+    /rm\s+-rf\s+\//,
+    /rm\s+-rf\s+\\\*/,
+    /del\s+\/s\s+\/f\s+\/q\s+c:/,
+    /format\s+[c-z]:/i,
+    /mkfs/i,
+    /dd\s+if=/i,
+    /(curl|wget|fetch|powershell\s+-Command\s+.*?Invoke-WebRequest).*?\|\s*(bash|sh|cmd|pwsh)/i,
+    /chmod\s+-r\s+777\s+\//,
+    /chown\s+-r/i,
+    /passwd\s+root/i,
+    /net\s+user\s+.*?\s+\/add/i,
+    /id_rsa/i,
+    /\.env/i,
+    /shadow/i,
+    /etc\/passwd/i,
+    /master\.passwd/i,
+    /sam\b/i,
+    /system32\/config/i,
+  ];
+
+  if (blockedPatterns.some(pattern => pattern.test(normalized))) {
+    return { score: 4, category: "CRITICAL_BLOCKED", reason: "Destructive pattern or download-and-execute shell pipe detected." };
+  }
+
+  // 2. High Risk (Risk 3 - Mandatory explicit approval)
+  const highRiskPatterns = [
+    /sudo\s+/i,
+    /runas/i,
+    /systemctl\s+(enable|disable|stop|mask)/i,
+    /registry\s+/i,
+    /reg\s+(add|delete|copy|load|restore)/i,
+    /rm\s+-rf/i,
+    /del\s+/i,
+    /netsh\s+/i,
+    /iptables\s+/i,
+    /ufw\s+/i,
+  ];
+
+  if (highRiskPatterns.some(pattern => pattern.test(normalized))) {
+    return { score: 3, category: "HIGH_RISK", reason: "Modifies system services, registry settings, networking, or deletes files." };
+  }
+
+  // 3. Low Risk Allowlist (Risk 1 - Auto-allow)
+  const lowRiskPrefixes = [
+    "git status",
+    "git diff",
+    "git log",
+    "npm test",
+    "node -v",
+    "npm -v",
+    "python --version",
+    "python3 --version",
+    "pip --version",
+    "pip3 --version",
+    "ollama list",
+    "ollama --version",
+    "df -h",
+    "free -h",
+    "uname -a",
+    "hostname",
+    "whoami",
+    "pwd",
+    "ls -l",
+    "dir",
+    "systemctl status",
+    "ps aux",
+  ];
+
+  const matchesLowRisk = lowRiskPrefixes.some(prefix => {
+    return normalized === prefix || normalized.startsWith(prefix + " ");
+  });
+
+  if (matchesLowRisk) {
+    return { score: 1, category: "LOW_RISK_ALLOWLIST", reason: "Read-only query of git status, system versions, disk space, or process lists." };
+  }
+
+  // 4. Default: Medium Risk (Risk 2 - standard approval)
+  return { score: 2, category: "MEDIUM_RISK", reason: "General execution query (e.g. package installers or directory scans)." };
+}
+
 // Hermes Core System Tools
 async function executeSystemCommand(command) {
-  const approved = requestUserApproval(
-    "Execute System Command",
-    "Hermes Agent is requesting to execute a terminal command on your computer.",
-    `Command:\n${command}\n\nWARNING: Executing commands can alter system state, modify settings, or install packages.`
-  );
+  const risk = assessCommandRisk(command);
+  
+  if (risk.score === 4) {
+    return `SECURITY_BLOCKED: Command was blocked by Pennyworth's Security Guard.\nReason: ${risk.reason}\nAction: Please execute this command manually in your own terminal if it is safe.`;
+  }
+
+  let approved = false;
+  if (risk.score === 1) {
+    approved = true;
+    console.log(`Auto-approved low-risk command: ${command}`);
+  } else if (risk.score === 3) {
+    approved = requestUserApproval(
+      "SECURITY ALERT: High-Risk Command Request",
+      `Hermes Agent is requesting to execute a HIGH-RISK command on your system.`,
+      `Command:\n${command}\n\nReason: ${risk.reason}\n\nWARNING: Modifying system files, registry edits, or networking configurations can damage your operating system.`
+    );
+  } else {
+    approved = requestUserApproval(
+      "Execute System Command",
+      "Hermes Agent is requesting to execute a command on your computer.",
+      `Command:\n${command}\n\nReason: ${risk.reason}`
+    );
+  }
 
   if (!approved) {
     return "COMMAND_EXECUTION_DENIED: The user denied permission to run this command.";
@@ -1007,4 +1110,5 @@ module.exports = {
   getGeminiFunctionDeclarations,
   executeToolFunction,
   runAgentTooling,
+  assessCommandRisk: process.env.NODE_ENV === "test" ? assessCommandRisk : undefined,
 };

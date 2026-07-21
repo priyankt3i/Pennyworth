@@ -6,6 +6,7 @@ const os = require("os");
 const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, ipcMain, desktopCapturer } = require("electron");
 const axios = require("axios");
 const screenshot = require("screenshot-desktop");
+const { exec, execSync } = require("child_process");
 
 const { loadDistroConfig, loadProviderConfig } = require("./core/config");
 const { getSystemContext } = require("./core/system-context");
@@ -298,6 +299,101 @@ function saveProviderState(providerConfig) {
   const next = normalizeProviderState(current, providerConfig);
   storeSet("providerConfig", next);
   return next;
+}
+
+async function checkOllamaRunning() {
+  try {
+    const res = await axios.get("http://127.0.0.1:11434/api/tags", { timeout: 2000 });
+    return res.status === 200;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function startOllamaService() {
+  const isWin = os.platform() === "win32";
+  const isMac = os.platform() === "darwin";
+  const isLinux = os.platform() === "linux";
+
+  if (isWin) {
+    const userLocal = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
+    const ollamaPath = path.join(userLocal, "Programs", "Ollama", "ollama app.exe");
+    if (fs.existsSync(ollamaPath)) {
+      exec(`start "" "${ollamaPath}"`);
+      await wait(3000);
+      return true;
+    }
+  } else if (isMac) {
+    if (fs.existsSync("/Applications/Ollama.app")) {
+      exec("open /Applications/Ollama.app");
+      await wait(3000);
+      return true;
+    }
+  } else if (isLinux) {
+    try {
+      execSync("systemctl --user start ollama || sudo systemctl start ollama");
+      await wait(3000);
+      return true;
+    } catch (e) {
+      exec("ollama serve &");
+      await wait(3000);
+      return true;
+    }
+  }
+  return false;
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function bootstrapOllama() {
+  const alreadyRunning = await checkOllamaRunning();
+  if (alreadyRunning) {
+    return { ok: true, message: "Ollama is already running." };
+  }
+
+  const started = await startOllamaService();
+  if (started && await checkOllamaRunning()) {
+    return { ok: true, message: "Ollama started successfully." };
+  }
+
+  const isWin = os.platform() === "win32";
+  const isLinux = os.platform() === "linux";
+  const isMac = os.platform() === "darwin";
+
+  try {
+    if (isWin) {
+      try {
+        execSync("winget --version");
+      } catch (e) {
+        throw new Error("winget package manager is not available. Please install Ollama manually from https://ollama.com");
+      }
+      
+      execSync("winget install Ollama.Ollama --accept-package-agreements --accept-source-agreements --silent", { stdio: "ignore" });
+      await startOllamaService();
+      
+      if (!(await checkOllamaRunning())) {
+        throw new Error("Ollama installed but local service failed to start.");
+      }
+      return { ok: true, message: "Ollama installed and started successfully via winget." };
+    } else if (isLinux) {
+      execSync("curl -fsSL https://ollama.com/install.sh | sh", { stdio: "ignore" });
+      await startOllamaService();
+      
+      if (!(await checkOllamaRunning())) {
+        throw new Error("Ollama installed but service could not be started automatically.");
+      }
+      return { ok: true, message: "Ollama installed and started successfully." };
+    } else if (isMac) {
+      throw new Error("Automated installation is not supported on macOS yet. Please download and run the installer from https://ollama.com");
+    } else {
+      throw new Error(`Unsupported OS platform: ${os.platform()}`);
+    }
+  } catch (error) {
+    console.error("Bootstrap installation failed:", error);
+    return { ok: false, error: error.message };
+  }
 }
 
 function getEncryptionKey() {
@@ -935,6 +1031,64 @@ ipcMain.handle("pennyworth:delete-session", async (_event, sessionId) => {
   try {
     const success = deleteSession(sessionId);
     return { ok: success };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("pennyworth:bootstrap-ollama", async () => {
+  return await bootstrapOllama();
+});
+
+ipcMain.handle("pennyworth:bootstrap-pull-model", async (_event, modelName) => {
+  try {
+    const response = await axios.post("http://127.0.0.1:11434/api/pull", {
+      name: modelName,
+      stream: true
+    }, {
+      responseType: "stream",
+      timeout: 600000 // 10 minutes timeout
+    });
+
+    response.data.on("data", (chunk) => {
+      const lines = chunk.toString().split("\n").filter(Boolean);
+      for (const line of lines) {
+        try {
+          const data = JSON.parse(line);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("pennyworth:bootstrap-progress", data);
+          }
+        } catch (e) {
+          // ignore parsing errors on raw stdout text chunks
+        }
+      }
+    });
+
+    await new Promise((resolve, reject) => {
+      response.data.on("end", () => resolve());
+      response.data.on("error", (err) => reject(err));
+    });
+
+    return { ok: true };
+  } catch (error) {
+    console.error("Bootstrap model pull failed:", error);
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("pennyworth:bootstrap-set-default-provider", async (_event, provider, model) => {
+  try {
+    const providerState = {
+      activeProvider: provider,
+      providers: {
+        ollama: {
+          enabled: true,
+          model: model,
+        }
+      }
+    };
+    saveProviderState(providerState);
+    return { ok: true };
   } catch (error) {
     return { ok: false, error: error.message };
   }

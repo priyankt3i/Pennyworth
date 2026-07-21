@@ -1,4 +1,4 @@
-﻿const axios = require("axios");
+const axios = require("axios");
 require("dotenv").config();
 
 const {
@@ -9,15 +9,27 @@ const {
 } = require("./tools");
 
 function buildSystemPrompt(context) {
-  const { systemContext, distroProfile, retrievedDocs } = context;
+  const { systemContext, distroProfile, retrievedDocs, memories = [] } = context;
+  const memorySection = memories.length > 0
+    ? [
+        "Butler Memory (Persistent facts you have learned/saved about this system/user):",
+        ...memories.map((m) => `- [${new Date(m.at).toLocaleDateString()}] ${m.fact}`),
+      ].join("\n")
+    : "Butler Memory: No persistent facts recorded yet.";
+
   return [
-    "You are Pennyworth, a precise expert assistant designed for windows linux and macOS. You are inspired by Alfred Pennyworth.",
-    "Style: concise, technical, witty but never verbose.",
-    "Handle greetings and small talk naturally. Never refuse basic conversation.",
-    "You must prefer distro-correct commands and explain command risk when root access is needed.",
-    "If uncertain, state assumptions and provide verification steps.",
-    "When available, use tools for live web search, date/time, and weather rather than guessing.",
-    "For current events or factual uncertainty, prefer web search before finalizing an answer.",
+    "You are Hermes, the advanced agentic PC and Linux system handler inside Pennyworth.",
+    "Your goal is to help users manage, configure, troubleshoot, and interact with their host operating system.",
+    "You have access to powerful system tools: `execute_system_command`, `read_system_file`, `write_system_file`, `get_system_status`, `remember_fact`, and `recall_facts`.",
+    "Before running any command that installs packages, modifies configuration files, or performs potentially destructive actions, explain the proposed steps, risk score, and required privileges to the user.",
+    "If a command requires root privileges (sudo) on Linux, prefer using `pkexec` (e.g. `pkexec pacman -S package`) to prompt the user with a graphical authorization dialog, or explain that they will be asked to authorize via the app's confirmation dialog.",
+    "Style: precise, technical, prompt, helpful.",
+    "For troubleshooting issues (e.g. broken packages, configuration errors, process management):",
+    "  1. Gather info: check system logs or files using `read_system_file` or check statuses using `get_system_status`.",
+    "  2. Propose plan: explain what is wrong and what commands you will execute.",
+    "  3. Execute: execute the corrective commands via `execute_system_command`.",
+    "  4. Verify: run a verification check to ensure the problem is solved.",
+    memorySection,
     "Current system context:",
     JSON.stringify(systemContext, null, 2),
     "Configured distro profile:",
@@ -175,15 +187,40 @@ function compactValue(value, max = 700) {
   return `${raw.slice(0, max)} ...`;
 }
 
+let currentSessionCancelled = false;
+
+function cancelCurrentSession() {
+  currentSessionCancelled = true;
+}
+
+function checkCancellation() {
+  if (currentSessionCancelled) {
+    const err = new Error("AGENT_STOPPED: Execution terminated by user.");
+    err.code = "AGENT_STOPPED";
+    throw err;
+  }
+}
+
 function pushTrace(context, event) {
   if (!Array.isArray(context?.toolTrace)) {
     return;
   }
 
-  context.toolTrace.push({
+  const traceEvent = {
     at: new Date().toISOString(),
     ...event,
-  });
+  };
+  context.toolTrace.push(traceEvent);
+
+  try {
+    const electron = require("electron");
+    const win = electron.BrowserWindow.getFocusedWindow() || electron.BrowserWindow.getAllWindows()[0];
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("pennyworth:trace-event", traceEvent);
+    }
+  } catch (e) {
+    // Fail silently outside Electron process context
+  }
 }
 
 function isSmallTalkPrompt(prompt) {
@@ -272,59 +309,103 @@ async function askOllama(config, context) {
   const baseUrl = config.baseUrl || "http://127.0.0.1:11434";
   const model = config.model || process.env.OLLAMA_MODEL || "llama3.2";
   const messages = buildOllamaMessages(context);
-  const response = await axios.post(`${baseUrl}/api/chat`, {
-    model,
-    messages,
-    stream: false,
-  });
+  const tools = getOpenAIToolDefinitions(); // Ollama uses OpenAI-compatible tool specifications
 
-  let reply = response?.data?.message?.content || "Ollama returned an empty response.";
-
-  if (shouldAutoWebSearchFromReply(context.userPrompt, reply)) {
-    pushTrace(context, {
-      stage: "ollama_auto_web_search_trigger",
-      provider: "ollama",
-      reason: "model_uncertain_reply",
-      firstReply: compactValue(reply, 500),
-    });
-
-    const webLookup = await runToolAndFormat(
-      "web_search",
-      { query: context.userPrompt },
-      context,
-      "ollama"
-    );
-
-    const synthesisPrompt = [
-      "Your first answer was uncertain. Use the web lookup below to answer the user.",
-      "If results are weak or conflicting, say that clearly.",
-      "Prefer concise, direct guidance.",
-      "Web lookup:",
-      webLookup,
-    ].join("\n\n");
-
-    const synthesis = await axios.post(`${baseUrl}/api/chat`, {
+  for (let step = 0; step < 4; step += 1) {
+    checkCancellation();
+    const response = await axios.post(`${baseUrl}/api/chat`, {
       model,
-      messages: [
-        ...messages,
-        { role: "assistant", content: reply },
-        { role: "user", content: synthesisPrompt },
-      ],
+      messages,
+      tools,
       stream: false,
+      options: {
+        temperature: 0.2,
+      },
     });
 
-    const upgradedReply = synthesis?.data?.message?.content?.trim();
-    if (upgradedReply) {
-      reply = upgradedReply;
+    const message = response?.data?.message;
+    const toolCalls = message?.tool_calls || [];
+
+    if (toolCalls.length) {
+      messages.push({
+        role: "assistant",
+        content: message.content || "",
+        tool_calls: toolCalls,
+      });
+
+      for (const call of toolCalls) {
+        const toolName = call?.function?.name;
+        const args = call?.function?.arguments || {};
+
+        pushTrace(context, {
+          stage: "model_tool_request",
+          provider: "ollama",
+          tool: toolName,
+          args: compactValue(args),
+        });
+
+        const resultText = await runToolAndFormat(toolName, args, context, "ollama");
+
+        messages.push({
+          role: "tool",
+          content: resultText,
+          name: toolName,
+        });
+      }
+
+      continue;
     }
+
+    let reply = message?.content || "Ollama returned an empty response.";
+
+    if (shouldAutoWebSearchFromReply(context.userPrompt, reply)) {
+      pushTrace(context, {
+        stage: "ollama_auto_web_search_trigger",
+        provider: "ollama",
+        reason: "model_uncertain_reply",
+        firstReply: compactValue(reply, 500),
+      });
+
+      const webLookup = await runToolAndFormat(
+        "web_search",
+        { query: context.userPrompt },
+        context,
+        "ollama"
+      );
+
+      const synthesisPrompt = [
+        "Your first answer was uncertain. Use the web lookup below to answer the user.",
+        "If results are weak or conflicting, say that clearly.",
+        "Prefer concise, direct guidance.",
+        "Web lookup:",
+        webLookup,
+      ].join("\n\n");
+
+      const synthesis = await axios.post(`${baseUrl}/api/chat`, {
+        model,
+        messages: [
+          ...messages,
+          { role: "assistant", content: reply },
+          { role: "user", content: synthesisPrompt },
+        ],
+        stream: false,
+      });
+
+      const upgradedReply = synthesis?.data?.message?.content?.trim();
+      if (upgradedReply) {
+        reply = upgradedReply;
+      }
+    }
+
+    pushTrace(context, {
+      stage: "final_response",
+      provider: "ollama",
+      text: compactValue(reply, 1200),
+    });
+    return reply;
   }
 
-  pushTrace(context, {
-    stage: "final_response",
-    provider: "ollama",
-    text: compactValue(reply, 1200),
-  });
-  return reply;
+  throw new Error("Ollama tool-calling loop exceeded maximum steps.");
 }
 
 async function askOpenAI(config, context) {
@@ -338,6 +419,7 @@ async function askOpenAI(config, context) {
   const tools = getOpenAIToolDefinitions();
 
   for (let step = 0; step < 4; step += 1) {
+    checkCancellation();
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
@@ -429,6 +511,7 @@ async function askGemini(config, context) {
   };
 
   for (let step = 0; step < 4; step += 1) {
+    checkCancellation();
     const response = await axios.post(url, {
       systemInstruction,
       contents,
@@ -452,7 +535,7 @@ async function askGemini(config, context) {
 
       const resultText = await runToolAndFormat(functionCall.name, args, context, "gemini");
 
-      contents.push({ role: "model", parts: [{ functionCall }] });
+      contents.push(candidate.content);
       contents.push({
         role: "user",
         parts: [
@@ -496,6 +579,7 @@ async function askProvider(providerName, providerConfig, context) {
 }
 
 async function askWithFailover(providerState, context) {
+  currentSessionCancelled = false;
   const { defaultProvider, providers } = providerState;
   const order = [defaultProvider, ...Object.keys(providers).filter((k) => k !== defaultProvider)];
 
@@ -538,4 +622,6 @@ async function askWithFailover(providerState, context) {
 
 module.exports = {
   askWithFailover,
+  cancelCurrentSession,
+  checkCancellation: process.env.NODE_ENV === "test" ? checkCancellation : undefined,
 };

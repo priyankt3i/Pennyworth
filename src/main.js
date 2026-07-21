@@ -1,5 +1,7 @@
-﻿const path = require("path");
+const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
+const os = require("os");
 const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, ipcMain, desktopCapturer } = require("electron");
 const axios = require("axios");
 const screenshot = require("screenshot-desktop");
@@ -218,7 +220,7 @@ function createTray() {
   tray.on("double-click", toggleWindow);
 
   const menu = Menu.buildFromTemplate([
-    { label: "Summon Pennyworth", click: toggleWindow },
+    { label: "Open Pennyworth", click: toggleWindow },
     {
       label: "Quit",
       click: () => {
@@ -297,27 +299,85 @@ function saveProviderState(providerConfig) {
   return next;
 }
 
-async function getStoredApiKey(account) {
-  if (!keytar) {
+function getEncryptionKey() {
+  const info = os.hostname() + os.arch() + os.platform() + (os.userInfo()?.username || "pennyworth");
+  return crypto.createHash("sha256").update(info).digest();
+}
+
+function encrypt(text) {
+  try {
+    const iv = crypto.randomBytes(16);
+    const key = getEncryptionKey();
+    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+    let encrypted = cipher.update(text, "utf8", "hex");
+    encrypted += cipher.final("hex");
+    return `${iv.toString("hex")}:${encrypted}`;
+  } catch (error) {
+    console.error("Encryption failed:", error);
     return "";
   }
-  return (await keytar.getPassword(KEYTAR_SERVICE, account)) || "";
+}
+
+function decrypt(encryptedText) {
+  try {
+    const parts = encryptedText.split(":");
+    if (parts.length !== 2) {
+      return "";
+    }
+    const iv = Buffer.from(parts[0], "hex");
+    const encrypted = parts[1];
+    const key = getEncryptionKey();
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    let decrypted = decipher.update(encrypted, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+  } catch (error) {
+    console.error("Decryption failed:", error);
+    return "";
+  }
+}
+
+async function getStoredApiKey(account) {
+  if (keytar) {
+    try {
+      const key = await keytar.getPassword(KEYTAR_SERVICE, account);
+      if (key) return key;
+    } catch (e) {
+      console.warn("Keytar read failed, using fallback storage:", e.message);
+    }
+  }
+
+  const encrypted = storeGet(`secret_${account}`);
+  if (encrypted) {
+    return decrypt(encrypted);
+  }
+  return "";
 }
 
 async function setStoredApiKey(account, value) {
-  if (!keytar) {
-    throw new Error("Secure key storage unavailable. Install keytar dependencies on this system.");
+  if (keytar) {
+    try {
+      await keytar.setPassword(KEYTAR_SERVICE, account, value);
+      storeSet(`secret_${account}`, undefined);
+      return;
+    } catch (e) {
+      console.warn("Keytar write failed, using fallback storage:", e.message);
+    }
   }
 
-  await keytar.setPassword(KEYTAR_SERVICE, account, value);
+  const encrypted = encrypt(value);
+  storeSet(`secret_${account}`, encrypted);
 }
 
 async function clearStoredApiKey(account) {
-  if (!keytar) {
-    throw new Error("Secure key storage unavailable. Install keytar dependencies on this system.");
+  if (keytar) {
+    try {
+      await keytar.deletePassword(KEYTAR_SERVICE, account);
+    } catch (e) {
+      console.warn("Keytar clear failed:", e.message);
+    }
   }
-
-  await keytar.deletePassword(KEYTAR_SERVICE, account);
+  storeSet(`secret_${account}`, undefined);
 }
 
 function hasEnvKeyForProvider(providerName) {
@@ -586,6 +646,40 @@ function autoDetectProfileId(distroConfig, systemContext) {
 
   if (!keys.length) {
     throw new Error("No distro profiles are configured.");
+  }
+
+  if (systemContext.platform === "win32") {
+    const prettyName = String(systemContext?.distro?.prettyName || "").toLowerCase();
+    const name = String(systemContext?.distro?.name || "").toLowerCase();
+
+    let targetId = "windows_11";
+    if (prettyName.includes("server 2025") || name.includes("server 2025")) {
+      targetId = "windows_server_2025";
+    } else if (prettyName.includes("windows 10") || name.includes("windows 10")) {
+      targetId = "windows_10";
+    }
+
+    const matchedName = profiles?.[targetId]?.name || targetId;
+    return {
+      profileId: targetId,
+      reason: `Windows system context resolved. Selected target profile: '${matchedName}'.`,
+    };
+  }
+
+  if (systemContext.platform === "darwin") {
+    const prettyName = String(systemContext?.distro?.prettyName || "").toLowerCase();
+    const name = String(systemContext?.distro?.name || "").toLowerCase();
+
+    let targetId = "macos_sequoia";
+    if (prettyName.includes("tahoe") || prettyName.includes("16.") || name.includes("tahoe")) {
+      targetId = "macos_tahoe";
+    }
+
+    const matchedName = profiles?.[targetId]?.name || targetId;
+    return {
+      profileId: targetId,
+      reason: `macOS system context resolved. Selected target profile: '${matchedName}'.`,
+    };
   }
 
   if (systemContext.platform !== "linux") {
@@ -1040,6 +1134,17 @@ ipcMain.handle("pennyworth:capture-screen", async (_event, payload) => {
   }
 });
 
+ipcMain.handle("pennyworth:cancel-agent", async () => {
+  try {
+    const providers = require("./core/providers");
+    providers.cancelCurrentSession();
+    return { ok: true };
+  } catch (error) {
+    console.error("Failed to cancel agent session:", error);
+    return { ok: false, error: error.message };
+  }
+});
+
 ipcMain.handle("pennyworth:ask", async (_event, payload) => {
   const { question, history = [], screenshotAttached = false, screenshotData = null } = payload || {};
   if (!question || !question.trim()) {
@@ -1057,6 +1162,16 @@ ipcMain.handle("pennyworth:ask", async (_event, payload) => {
     const providerState = await getProviderStateForAsk();
     const retrievedDocs = retrieveContext(ROOT_DIR, state.profileId, question);
 
+    let memories = [];
+    try {
+      const memoryFilePath = path.join(app.getPath("userData"), "pennyworth-memory.json");
+      if (fs.existsSync(memoryFilePath)) {
+        memories = JSON.parse(fs.readFileSync(memoryFilePath, "utf8"));
+      }
+    } catch (e) {
+      console.warn("Failed to load memory file for prompt injection:", e.message);
+    }
+
     const answer = await askWithFailover(providerState, {
       userPrompt: question,
       history,
@@ -1066,6 +1181,7 @@ ipcMain.handle("pennyworth:ask", async (_event, payload) => {
       agentContext: state.agentContext,
       distroProfile: state.contextWithOverrides.profile,
       retrievedDocs,
+      memories,
     });
 
     return {
@@ -1084,31 +1200,46 @@ ipcMain.handle("pennyworth:ask", async (_event, payload) => {
   }
 });
 
-app.whenReady().then(() => {
-  Menu.setApplicationMenu(null);
-  if (process.platform === "win32") {
-    app.setAppUserModelId("com.pennyworth.desktop");
-  }
-  if (process.platform === "darwin" && app.dock) {
-    const iconPath = resolveWindowIconPath();
-    if (iconPath) {
-      app.dock.setIcon(iconPath);
+if (process.env.NODE_ENV !== "test") {
+  app.whenReady().then(() => {
+    Menu.setApplicationMenu(null);
+    if (process.platform === "win32") {
+      app.setAppUserModelId("com.pennyworth.desktop");
     }
-  }
-  createWindow();
-  createTray();
-  registerShortcuts();
-});
+    if (process.platform === "darwin" && app.dock) {
+      const iconPath = resolveWindowIconPath();
+      if (iconPath) {
+        app.dock.setIcon(iconPath);
+      }
+    }
+    createWindow();
+    createTray();
+    registerShortcuts();
+  });
 
-app.on("will-quit", () => {
-  globalShortcut.unregisterAll();
-});
+  app.on("will-quit", () => {
+    globalShortcut.unregisterAll();
+  });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
+}
+
+if (process.env.NODE_ENV === "test") {
+  module.exports = {
+    autoDetectProfileId,
+    encrypt,
+    decrypt,
+    getStoredApiKey,
+    setStoredApiKey,
+    clearStoredApiKey,
+    storeGet,
+    storeSet,
+  };
+}
 
 
 

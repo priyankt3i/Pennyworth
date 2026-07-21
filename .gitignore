@@ -5,3 +5,4 @@ config/providers.json
 data/cache/
 *.log
 .env.example
+package-lock.json

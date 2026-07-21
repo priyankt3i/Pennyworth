@@ -15,7 +15,8 @@
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac",
-    "dist:linux": "electron-builder --linux"
+    "dist:linux": "electron-builder --linux",
+    "test": "node --test src/tests/**/*.test.js"
   },
   "dependencies": {
     "axios": "^1.9.0",

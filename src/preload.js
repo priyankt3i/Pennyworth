@@ -21,4 +21,8 @@ contextBridge.exposeInMainWorld("pennyworth", {
   loadSession: (sessionId) => ipcRenderer.invoke("pennyworth:load-session", sessionId),
   newSession: () => ipcRenderer.invoke("pennyworth:new-session"),
   deleteSession: (sessionId) => ipcRenderer.invoke("pennyworth:delete-session", sessionId),
+  bootstrapOllama: () => ipcRenderer.invoke("pennyworth:bootstrap-ollama"),
+  bootstrapPullModel: (modelName) => ipcRenderer.invoke("pennyworth:bootstrap-pull-model", modelName),
+  bootstrapSetDefaultProvider: (provider, model) => ipcRenderer.invoke("pennyworth:bootstrap-set-default-provider", provider, model),
+  onBootstrapProgress: (handler) => ipcRenderer.on("pennyworth:bootstrap-progress", (event, arg) => handler(arg)),
 });

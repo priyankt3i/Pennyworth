@@ -18,6 +18,8 @@ const state = {
   providerHealth: null,
   activeSessionId: null,
   sessions: [],
+  notifications: [],
+  unreadNotificationsCount: 0,
 };
 
 const el = {
@@ -81,11 +83,137 @@ const el = {
   toggleSidebarBtn: document.getElementById("toggleSidebarBtn"),
   newChatBtn: document.getElementById("newChatBtn"),
   sessionsList: document.getElementById("sessionsList"),
+  notificationsBtn: document.getElementById("notificationsBtn"),
+  notificationBadge: document.getElementById("notificationBadge"),
+  notificationsModal: document.getElementById("notificationsModal"),
+  closeNotificationsBtn: document.getElementById("closeNotificationsBtn"),
+  clearNotificationsBtn: document.getElementById("clearNotificationsBtn"),
+  notificationsList: document.getElementById("notificationsList"),
+  toastContainer: document.getElementById("toastContainer"),
 };
 
 function setStatus(text, mode = "info") {
+  if (!el.status) return;
   el.status.textContent = text;
-  el.status.dataset.mode = mode;
+  el.status.className = mode;
+
+  // Log to notifications system (exclude trivial/empty ready status messages)
+  if (text && text !== "Ready" && text !== "Ready.") {
+    pushNotification(mode, text);
+  }
+}
+
+function pushNotification(type, message) {
+  const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const notification = {
+    id: Math.random().toString(36).substr(2, 9),
+    type,
+    message,
+    timestamp
+  };
+  state.notifications.push(notification);
+
+  // Update badge count if history modal is not open
+  const modalOpen = el.notificationsModal && !el.notificationsModal.classList.contains("hidden");
+  if (!modalOpen) {
+    state.unreadNotificationsCount += 1;
+    updateNotificationBadge();
+  }
+
+  // Draw toast in the toast container
+  if (el.toastContainer) {
+    const toast = document.createElement("div");
+    toast.className = `toast ${type}`;
+    toast.dataset.id = notification.id;
+
+    // Truncate message for small toast block
+    const displayMsg = message.length > 120 ? `${message.slice(0, 120)}...` : message;
+
+    toast.innerHTML = `
+      <span style="font-weight:700; text-transform:uppercase; font-size:0.7rem; margin-right:4px;">${type === "ok" ? "success" : type}:</span>
+      <span class="toast-msg">${displayMsg}</span>
+      <button class="toast-close" type="button">×</button>
+    `;
+
+    // Close button click
+    const closeBtn = toast.querySelector(".toast-close");
+    closeBtn.addEventListener("click", () => {
+      toast.style.opacity = "0";
+      toast.style.transform = "translateX(100%)";
+      setTimeout(() => toast.remove(), 200);
+    });
+
+    el.toastContainer.appendChild(toast);
+
+    // Auto-dismiss info or ok logs after 6 seconds
+    if (type === "info" || type === "ok") {
+      setTimeout(() => {
+        if (toast.parentNode) {
+          toast.style.opacity = "0";
+          toast.style.transform = "translateX(100%)";
+          setTimeout(() => toast.remove(), 200);
+        }
+      }, 6000);
+    }
+  }
+}
+
+function updateNotificationBadge() {
+  if (!el.notificationBadge) return;
+  if (state.unreadNotificationsCount > 0) {
+    el.notificationBadge.textContent = state.unreadNotificationsCount;
+    el.notificationBadge.classList.remove("hidden");
+  } else {
+    el.notificationBadge.classList.add("hidden");
+  }
+}
+
+function openNotificationsModal() {
+  if (!el.notificationsModal) return;
+  el.notificationsModal.classList.remove("hidden");
+  
+  // Mark all as read
+  state.unreadNotificationsCount = 0;
+  updateNotificationBadge();
+  
+  renderNotificationsList();
+}
+
+function closeNotificationsModal() {
+  if (!el.notificationsModal) return;
+  el.notificationsModal.classList.add("hidden");
+}
+
+function clearNotifications() {
+  state.notifications = [];
+  state.unreadNotificationsCount = 0;
+  updateNotificationBadge();
+  renderNotificationsList();
+}
+
+function renderNotificationsList() {
+  if (!el.notificationsList) return;
+  el.notificationsList.innerHTML = "";
+
+  if (state.notifications.length === 0) {
+    el.notificationsList.innerHTML = `<p class="no-logs" style="color:var(--muted); font-size:0.8rem; padding: 20px; text-align:center;">No alerts logged yet.</p>`;
+    return;
+  }
+
+  // Render logs in reverse order (newest first)
+  const sortedLogs = state.notifications.slice().reverse();
+  sortedLogs.forEach((item) => {
+    const card = document.createElement("div");
+    card.className = `notification-history-item ${item.type}`;
+    card.innerHTML = `
+      <span class="notification-time">${item.timestamp}</span>
+      <span class="notification-msg">
+        <strong style="text-transform:uppercase; font-size:0.75rem; color:var(--text); display:inline-block; margin-right:4px;">${item.type === "ok" ? "success" : item.type}:</strong>
+        ${item.message}
+      </span>
+    `;
+    el.notificationsList.appendChild(card);
+  });
 }
 
 function showLoader(show) {
@@ -164,6 +292,24 @@ async function loadSessionsFlow() {
   }
 }
 
+async function checkActiveProviderStatus() {
+  try {
+    const active = activeProviderName();
+    if (!active) return false;
+    
+    const healthResult = await window.pennyworth.getProviderHealth({
+      providerConfig: state.runtime.providerConfig,
+    });
+    if (healthResult.ok && healthResult.health) {
+      const activeHealth = healthResult.health[active];
+      return isProviderConnected(activeHealth);
+    }
+  } catch (e) {
+    console.error("Failed to check active provider status:", e);
+  }
+  return false;
+}
+
 async function switchSessionFlow(sessionId) {
   try {
     setBusy(true);
@@ -181,12 +327,17 @@ async function switchSessionFlow(sessionId) {
       });
 
       if (state.history.length === 0) {
-        const systemName = state.system?.distro?.prettyName || state.system?.platform || "PC";
-        appendMessage(
-          "assistant",
-          `Hermes Agent ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
-          "Hermes"
-        );
+        const hasProvider = await checkActiveProviderStatus();
+        if (!hasProvider) {
+          appendWelcomeSetupCard();
+        } else {
+          const systemName = state.system?.distro?.prettyName || state.system?.platform || "PC";
+          appendMessage(
+            "assistant",
+            `Hermes Agent ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
+            "Hermes"
+          );
+        }
       }
 
       renderSessionsList();
@@ -212,12 +363,17 @@ async function createNewSessionFlow() {
       state.history = [];
       clearChatDisplay();
 
-      const systemName = state.system?.distro?.prettyName || state.system?.platform || "PC";
-      appendMessage(
-        "assistant",
-        `Hermes Agent ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
-        "Hermes"
-      );
+      const hasProvider = await checkActiveProviderStatus();
+      if (!hasProvider) {
+        appendWelcomeSetupCard();
+      } else {
+        const systemName = state.system?.distro?.prettyName || state.system?.platform || "PC";
+        appendMessage(
+          "assistant",
+          `Hermes Agent ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
+          "Hermes"
+        );
+      }
 
       await loadSessionsFlow();
       setStatus("New chat ready.");
@@ -387,6 +543,112 @@ function isProviderConnected(healthEntry) {
   return String(healthEntry?.state || "").toLowerCase() === "connected";
 }
 
+function appendWelcomeSetupCard() {
+  const cardId = "welcomeSetupCard";
+  if (document.getElementById(cardId)) return;
+
+  const wrapper = document.createElement("article");
+  wrapper.className = "message assistant welcome-card-wrapper";
+  wrapper.id = cardId;
+
+  const content = document.createElement("div");
+  content.className = "message-body welcome-card-body";
+  content.innerHTML = `
+    <h3 style="margin-top:0; color:var(--accent); font-size:1.15rem;">Welcome to Pennyworth!</h3>
+    <p style="font-size:0.88rem; line-height:1.45; color:var(--text); margin-bottom:14px;">To begin using your local PC copilot, choose one of the options below to configure an LLM provider:</p>
+    
+    <div class="setup-options-container" style="display:flex; flex-direction:column; gap:12px; margin: 16px 0;">
+      <div class="setup-option-card" style="border:1px solid var(--border); padding:14px; border-radius:8px; background:rgba(0,0,0,0.02); text-align:left;">
+        <strong style="color:var(--text); font-size:0.92rem; display:block; margin-bottom:4px;">Option 1: Bootstrap Local Ollama (Recommended)</strong>
+        <span style="font-size:0.8rem; color:var(--muted); display:block; margin-bottom:12px;">Installs Ollama, starts the local service, and downloads <strong>Qwen 2.5 Coder 1.5B</strong> automatically. Safe, private, and works offline.</span>
+        <button id="setupLocalOllamaBtn" class="no-drag" type="button" style="background:var(--accent); color:white; border:none; padding:8px 14px; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.82rem; transition: background 0.2s;">Download & Set Up Local LLM</button>
+      </div>
+      
+      <div class="setup-option-card" style="border:1px solid var(--border); padding:14px; border-radius:8px; background:rgba(0,0,0,0.02); text-align:left;">
+        <strong style="color:var(--text); font-size:0.92rem; display:block; margin-bottom:4px;">Option 2: Connect Cloud API Key</strong>
+        <span style="font-size:0.8rem; color:var(--muted); display:block; margin-bottom:12px;">Configure OpenAI, Gemini, or an existing Ollama endpoint manually.</span>
+        <button id="setupCloudBtn" class="no-drag" type="button" style="background:var(--surface-2); color:var(--text); border:1px solid var(--border); padding:8px 14px; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.82rem; transition: background 0.2s;">Open Settings API Panel</button>
+      </div>
+    </div>
+    
+    <div id="setupProgressArea" class="hidden" style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px; text-align:left;">
+      <h4 style="margin:0 0 8px; color:var(--text); font-size:0.85rem;" id="setupProgressTitle">Onboarding Progress</h4>
+      <div style="width:100%; height:6px; background:var(--border); border-radius:3px; overflow:hidden; margin-bottom:8px;">
+        <div id="setupProgressBar" style="width:0%; height:100%; background:var(--accent); transition:width 0.2s;"></div>
+      </div>
+      <p id="setupProgressStatus" style="font-size:0.78rem; color:var(--muted); margin:0;">Waiting to start...</p>
+    </div>
+  `;
+
+  wrapper.appendChild(content);
+  el.chat.appendChild(wrapper);
+  el.chat.scrollTop = el.chat.scrollHeight;
+
+  const localBtn = wrapper.querySelector("#setupLocalOllamaBtn");
+  const cloudBtn = wrapper.querySelector("#setupCloudBtn");
+  const progressArea = wrapper.querySelector("#setupProgressArea");
+  const progressBar = wrapper.querySelector("#setupProgressBar");
+  const progressStatus = wrapper.querySelector("#setupProgressStatus");
+  const progressTitle = wrapper.querySelector("#setupProgressTitle");
+
+  cloudBtn.addEventListener("click", () => {
+    openSettingsModal();
+  });
+
+  localBtn.addEventListener("click", async () => {
+    localBtn.disabled = true;
+    cloudBtn.disabled = true;
+    progressArea.classList.remove("hidden");
+    
+    try {
+      progressTitle.textContent = "Bootstrapping Ollama...";
+      progressStatus.textContent = "Installing Ollama on your system (this may request authorization)...";
+      progressBar.style.width = "10%";
+
+      const installRes = await window.pennyworth.bootstrapOllama();
+      if (!installRes.ok) {
+        throw new Error(installRes.error || "Ollama installation failed.");
+      }
+
+      progressBar.style.width = "40%";
+      progressStatus.textContent = "Ollama installed. Starting local service...";
+
+      progressBar.style.width = "50%";
+      progressStatus.textContent = "Downloading Qwen 2.5 Coder 1.5B model from Ollama registry...";
+
+      const pullRes = await window.pennyworth.bootstrapPullModel("qwen2.5:1.5b");
+      if (!pullRes.ok) {
+        throw new Error(pullRes.error || "Failed to download model.");
+      }
+
+      progressBar.style.width = "90%";
+      progressStatus.textContent = "Configuring Pennyworth default settings...";
+
+      const configRes = await window.pennyworth.bootstrapSetDefaultProvider("ollama", "qwen2.5:1.5b");
+      if (!configRes.ok) {
+        throw new Error(configRes.error || "Failed to set default provider.");
+      }
+
+      progressBar.style.width = "100%";
+      progressStatus.textContent = "Success! Local setup complete. Reloading application...";
+      progressTitle.textContent = "Setup Successful!";
+      
+      setTimeout(async () => {
+        wrapper.remove();
+        await loadRuntime();
+        refreshProviderHealth(false, false);
+      }, 2000);
+
+    } catch (err) {
+      localBtn.disabled = false;
+      cloudBtn.disabled = false;
+      progressStatus.textContent = `Setup failed: ${err.message}`;
+      progressTitle.textContent = "Bootstrap Error";
+      progressBar.style.background = "var(--danger)";
+    }
+  });
+}
+
 function showNoProviderGuidance(showInChat = false, detail = "") {
   const active = activeProviderName() || "none";
   const reason = detail ? ` Reason: ${detail}.` : "";
@@ -398,7 +660,7 @@ function showNoProviderGuidance(showInChat = false, detail = "") {
   }
   setStatus(helpText, "error");
   if (showInChat) {
-    appendMessage("assistant", helpText, "System");
+    appendWelcomeSetupCard();
   }
 }
 
@@ -1457,6 +1719,22 @@ async function init() {
     await createNewSessionFlow();
   }
 
+  if (window.pennyworth.onBootstrapProgress) {
+    window.pennyworth.onBootstrapProgress((data) => {
+      const progressBar = document.getElementById("setupProgressBar");
+      const progressStatus = document.getElementById("setupProgressStatus");
+      if (progressBar && progressStatus) {
+        if (data.status === "downloading" && data.total > 0) {
+          const pct = Math.round((data.completed / data.total) * 100);
+          progressBar.style.width = `${50 + (pct * 0.4)}%`;
+          progressStatus.textContent = `Downloading model: ${pct}% complete (${(data.completed / 1024 / 1024).toFixed(0)} / ${(data.total / 1024 / 1024).toFixed(0)} MB)...`;
+        } else {
+          progressStatus.textContent = data.status || progressStatus.textContent;
+        }
+      }
+    });
+  }
+
   el.sendBtn.addEventListener("click", () => {
     if (el.sendBtn.dataset.action === "stop") {
       stopAgent();
@@ -1467,6 +1745,15 @@ async function init() {
   el.captureBtn.addEventListener("click", captureScreenFlow);
   el.voiceBtn.addEventListener("click", startVoiceInput);
   el.settingsBtn.addEventListener("click", openSettingsModal);
+  if (el.notificationsBtn) {
+    el.notificationsBtn.addEventListener("click", openNotificationsModal);
+  }
+  if (el.closeNotificationsBtn) {
+    el.closeNotificationsBtn.addEventListener("click", closeNotificationsModal);
+  }
+  if (el.clearNotificationsBtn) {
+    el.clearNotificationsBtn.addEventListener("click", clearNotifications);
+  }
   if (el.windowMinBtn) {
     el.windowMinBtn.addEventListener("click", () => {
       invokeWindowControl(() => window.pennyworth.windowMinimize(), "Failed to minimize window.");

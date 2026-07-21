@@ -5,7 +5,7 @@ const path = require("path");
 const os = require("os");
 const Module = require("module");
 
-// 1. Mock Electron globally before loading any project files
+// 1. Mock Electron, child_process, and axios globally before loading any project files
 const originalRequire = Module.prototype.require;
 Module.prototype.require = function(id) {
   if (id === "electron") {
@@ -41,6 +41,49 @@ Module.prototype.require = function(id) {
         register: () => {},
         unregisterAll: () => {},
       },
+    };
+  }
+  if (id === "child_process") {
+    return {
+      exec: (cmd, opts, cb) => {
+        const callback = typeof opts === "function" ? opts : cb;
+        if (callback) {
+          setTimeout(() => callback(null, "stdout mock", ""), 10);
+        }
+        return { on: () => {} };
+      },
+      execSync: (cmd) => {
+        if (cmd.includes("winget --version")) return "v1.8.1911";
+        return "mock result";
+      }
+    };
+  }
+  if (id === "axios") {
+    return {
+      get: async (url) => {
+        if (url.includes("/api/tags")) {
+          // Trigger first request as offline, second as online
+          if (process.env.TEST_OLLAMA_OFFLINE === "true") {
+            process.env.TEST_OLLAMA_OFFLINE = "false";
+            throw new Error("connection refused");
+          }
+          return { status: 200, data: { models: [{ name: "qwen2.5:1.5b" }] } };
+        }
+        return { status: 200, data: {} };
+      },
+      post: async (url, data) => {
+        if (url.includes("/api/pull")) {
+          const { Readable } = require("stream");
+          const s = new Readable({
+            read() {
+              this.push(JSON.stringify({ status: "success" }));
+              this.push(null);
+            }
+          });
+          return { status: 200, data: s };
+        }
+        return { status: 200, data: {} };
+      }
     };
   }
   return originalRequire.apply(this, arguments);
@@ -238,4 +281,22 @@ test("Multi-Session Chat Database", async (t) => {
       fs.rmdirSync(sessionsDir);
     } catch (e) {}
   }
+});
+
+test("Bootstrap Local Ollama Installation Flow", async (t) => {
+  await t.test("should successfully verify and execute bootstrapOllama", async () => {
+    process.env.TEST_OLLAMA_OFFLINE = "true";
+    const res = await mainModule.bootstrapOllama();
+    assert.ok(res.ok);
+    assert.ok(res.message.includes("Ollama"));
+  });
+
+  await t.test("should successfully set default settings profile for Ollama", () => {
+    const res = mainModule.bootstrapSetDefaultProvider("ollama", "qwen2.5:1.5b");
+    assert.ok(res.ok);
+    
+    const savedState = mainModule.storeGet("providerConfig");
+    assert.strictEqual(savedState.defaultProvider, "ollama");
+    assert.strictEqual(savedState.providers.ollama.model, "qwen2.5:1.5b");
+  });
 });

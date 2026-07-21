@@ -1071,7 +1071,7 @@ select:disabled {
   }
 
   #status {
-    white-space: normal;
+    white-space: nowrap;
   }
 
   .settings-grid,
@@ -1229,4 +1229,166 @@ select:disabled {
 .hamburger-btn:hover {
   background: var(--surface);
   color: var(--text);
+}
+
+/* Toast Notification Styles */
+.toast-container {
+  position: fixed;
+  top: 80px;
+  right: 24px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 320px;
+  width: calc(100vw - 48px);
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--text);
+  animation: slideInRight 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.2s ease;
+}
+
+.toast.error {
+  border-left: 4px solid var(--danger);
+}
+
+.toast.warn {
+  border-left: 4px solid var(--warning);
+}
+
+.toast.ok {
+  border-left: 4px solid var(--success);
+}
+
+.toast.info {
+  border-left: 4px solid var(--accent);
+}
+
+.toast-close {
+  background: transparent;
+  border: none;
+  color: var(--muted-2);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0;
+  margin-left: auto;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  transition: color 0.15s;
+}
+
+.toast-close:hover {
+  color: var(--text);
+}
+
+/* Bell Toggle Header Icon Styles */
+.notifications-toggle {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  min-width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.notifications-toggle:hover {
+  background: var(--surface);
+}
+
+.notification-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background: var(--danger);
+  color: white;
+  font-size: 0.62rem;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 2px 5px;
+  line-height: 1;
+  min-width: 14px;
+  text-align: center;
+  box-shadow: 0 0 4px rgba(0,0,0,0.15);
+}
+
+/* Notifications History Modal List Styles */
+.notifications-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 50vh;
+}
+
+.notification-history-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.notification-history-item.error { border-left: 3px solid var(--danger); }
+.notification-history-item.warn { border-left: 3px solid var(--warning); }
+.notification-history-item.ok { border-left: 3px solid var(--success); }
+.notification-history-item.info { border-left: 3px solid var(--accent); }
+
+.notification-time {
+  color: var(--muted-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  min-width: 58px;
+  padding-top: 1px;
+}
+
+.notification-msg {
+  flex: 1;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* Animations */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }

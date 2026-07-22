@@ -5,6 +5,8 @@ const path = require("path");
 const os = require("os");
 const Module = require("module");
 
+const registeredIpcHandlers = {};
+
 // 1. Mock Electron, child_process, and axios globally before loading any project files
 const originalRequire = Module.prototype.require;
 Module.prototype.require = function(id) {
@@ -21,7 +23,9 @@ Module.prototype.require = function(id) {
         getAllWindows: () => [],
       },
       ipcMain: {
-        handle: () => {},
+        handle: (channel, callback) => {
+          registeredIpcHandlers[channel] = callback;
+        },
         on: () => {},
       },
       Menu: {
@@ -45,6 +49,35 @@ Module.prototype.require = function(id) {
         isEncryptionAvailable: () => true,
         encryptString: (str) => Buffer.from(str),
         decryptString: (buf) => buf.toString(),
+      },
+      screen: {
+        getAllDisplays: () => [
+          { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 }, scaleFactor: 1 },
+          { id: 2, bounds: { x: 1920, y: 0, width: 1280, height: 720 }, scaleFactor: 1.5 }
+        ],
+        getPrimaryDisplay: () => ({ id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 }, scaleFactor: 1 })
+      },
+      desktopCapturer: {
+        getSources: async (options) => {
+          return [
+            {
+              id: "screen:0:0",
+              name: "Display 1",
+              display_id: "1",
+              thumbnail: {
+                toDataURL: () => "data:image/png;base64,mockdisplay1data"
+              }
+            },
+            {
+              id: "screen:1:0",
+              name: "Display 2",
+              display_id: "2",
+              thumbnail: {
+                toDataURL: () => "data:image/png;base64,mockdisplay2data"
+              }
+            }
+          ];
+        }
       },
     };
   }
@@ -371,5 +404,56 @@ test("Security Hardening & Redesign Checks", async (t) => {
 
     const res2 = tools.assessCommandRisk("Clear-Disk -Number 1");
     assert.strictEqual(res.score, 4);
+  });
+});
+
+test("Screenshot capture handlers", async (t) => {
+  const { registerIpcHandlers } = require("../main/ipc-handlers");
+  // Register handlers using a mock getMainWindow callback
+  registerIpcHandlers(() => null);
+
+  await t.test("should successfully list displays using native Electron API", async () => {
+    const listDisplaysHandler = registeredIpcHandlers["pennyworth:list-displays"];
+    assert.ok(listDisplaysHandler, "pennyworth:list-displays handler should be registered");
+
+    const result = await listDisplaysHandler();
+    assert.strictEqual(result.ok, true);
+    assert.ok(Array.isArray(result.displays));
+    assert.strictEqual(result.displays.length, 2);
+    assert.strictEqual(result.displays[0].id, 1);
+    assert.strictEqual(result.displays[0].name, "Display 1");
+    assert.strictEqual(result.displays[0].primary, true);
+    assert.strictEqual(result.displays[1].id, 2);
+    assert.strictEqual(result.displays[1].name, "Display 2");
+    assert.strictEqual(result.displays[1].primary, false);
+  });
+
+  await t.test("should successfully capture primary display screenshot", async () => {
+    const captureScreenHandler = registeredIpcHandlers["pennyworth:capture-screen"];
+    assert.ok(captureScreenHandler, "pennyworth:capture-screen handler should be registered");
+
+    const result = await captureScreenHandler(null, { screenId: 1 });
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.dataUri, "data:image/png;base64,mockdisplay1data");
+    assert.strictEqual(result.imageDataUrl, "data:image/png;base64,mockdisplay1data");
+    assert.strictEqual(result.screenName, "Display 1");
+  });
+
+  await t.test("should successfully capture secondary display screenshot", async () => {
+    const captureScreenHandler = registeredIpcHandlers["pennyworth:capture-screen"];
+    const result = await captureScreenHandler(null, { screenId: 2 });
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.dataUri, "data:image/png;base64,mockdisplay2data");
+    assert.strictEqual(result.imageDataUrl, "data:image/png;base64,mockdisplay2data");
+    assert.strictEqual(result.screenName, "Display 2");
+  });
+
+  await t.test("should successfully capture by index if display ID mismatch", async () => {
+    const captureScreenHandler = registeredIpcHandlers["pennyworth:capture-screen"];
+    const result = await captureScreenHandler(null, { displayKey: "display-1" });
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.dataUri, "data:image/png;base64,mockdisplay2data");
+    assert.strictEqual(result.imageDataUrl, "data:image/png;base64,mockdisplay2data");
+    assert.strictEqual(result.screenName, "Display 2");
   });
 });

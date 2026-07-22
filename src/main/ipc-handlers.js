@@ -166,8 +166,34 @@ function registerIpcHandlers(getMainWindow) {
 
   ipcMain.handle("pennyworth:list-displays", async () => {
     try {
-      const screenshot = require("screenshot-desktop");
-      const displays = await screenshot.listDisplays();
+      let displays = [];
+      try {
+        const { screen } = require("electron");
+        const electronDisplays = screen.getAllDisplays();
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const sources = await desktopCapturer.getSources({
+          types: ["screen"],
+          thumbnailSize: { width: 1, height: 1 }
+        });
+        displays = electronDisplays.map((d, index) => {
+          const source = sources.find(s => String(s.display_id) === String(d.id)) || sources[index];
+          const name = source ? source.name : `Display ${index + 1}`;
+          return {
+            id: d.id,
+            name: name,
+            primary: d.id === primaryDisplay.id
+          };
+        });
+      } catch (electronError) {
+        console.error("Electron native display detection failed, falling back to screenshot-desktop:", electronError);
+        const screenshot = require("screenshot-desktop");
+        const rawDisplays = await screenshot.listDisplays();
+        displays = rawDisplays.map((d, index) => ({
+          id: d.id,
+          name: d.name || `Display ${index + 1}`,
+          primary: index === 0
+        }));
+      }
       return { ok: true, displays };
     } catch (error) {
       return { ok: false, error: error.message };
@@ -176,17 +202,83 @@ function registerIpcHandlers(getMainWindow) {
 
   ipcMain.handle("pennyworth:capture-screen", async (_event, payload) => {
     try {
-      const screenshot = require("screenshot-desktop");
-      const displayKey = payload?.displayKey;
-      let options = { format: "png" };
+      const targetId = payload?.screenId || payload?.displayKey;
+      let dataUri = null;
+      let screenName = "default display";
 
-      if (displayKey) {
-        options.screen = displayKey;
+      try {
+        const { screen } = require("electron");
+        const allDisplays = screen.getAllDisplays();
+        
+        let targetDisplay = null;
+        let targetIndex = 0;
+        
+        if (targetId !== undefined && targetId !== null && targetId !== "") {
+          const idx = allDisplays.findIndex(d => String(d.id) === String(targetId));
+          if (idx !== -1) {
+            targetDisplay = allDisplays[idx];
+            targetIndex = idx;
+          } else {
+            const matchedIndex = String(targetId).match(/\d+/);
+            if (matchedIndex) {
+              const parsedIdx = parseInt(matchedIndex[0], 10);
+              if (parsedIdx >= 0 && parsedIdx < allDisplays.length) {
+                targetDisplay = allDisplays[parsedIdx];
+                targetIndex = parsedIdx;
+              }
+            }
+          }
+        }
+        
+        if (!targetDisplay) {
+          targetDisplay = screen.getPrimaryDisplay() || allDisplays[0];
+          targetIndex = 0;
+        }
+
+        const { width, height } = targetDisplay.bounds;
+        const scale = targetDisplay.scaleFactor || 1;
+
+        const sources = await desktopCapturer.getSources({
+          types: ["screen"],
+          thumbnailSize: {
+            width: Math.round(width * scale),
+            height: Math.round(height * scale)
+          }
+        });
+
+        let matchingSource = sources.find(s => String(s.display_id) === String(targetDisplay.id));
+        if (!matchingSource) {
+          matchingSource = sources[targetIndex] || sources[0];
+        }
+
+        if (matchingSource) {
+          dataUri = matchingSource.thumbnail.toDataURL();
+          screenName = matchingSource.name || `Display ${targetIndex + 1}`;
+        } else {
+          throw new Error("No desktopCapturer sources found");
+        }
+      } catch (electronError) {
+        console.error("Electron desktopCapturer failed, falling back to screenshot-desktop:", electronError);
+        const screenshot = require("screenshot-desktop");
+        let options = { format: "png" };
+        if (targetId !== undefined && targetId !== null && targetId !== "") {
+          options.screen = targetId;
+        }
+        const imgBuffer = await screenshot(options);
+        dataUri = `data:image/png;base64,${imgBuffer.toString("base64")}`;
+        screenName = `Display ${targetId || "default"}`;
       }
 
-      const imgBuffer = await screenshot(options);
-      const dataUri = `data:image/png;base64,${imgBuffer.toString("base64")}`;
-      return { ok: true, dataUri };
+      if (!dataUri) {
+        throw new Error("Failed to capture screen from all methods");
+      }
+
+      return {
+        ok: true,
+        dataUri,
+        imageDataUrl: dataUri,
+        screenName
+      };
     } catch (error) {
       return { ok: false, error: error.message };
     }

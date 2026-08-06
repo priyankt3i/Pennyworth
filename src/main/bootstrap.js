@@ -1,6 +1,24 @@
-const { exec, execSync } = require("child_process");
+const { exec } = require("child_process");
 const axios = require("axios");
 const { saveProviderState } = require("./provider-config");
+
+function execAsync(command, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = exec(command, options, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve({ stdout, stderr });
+      }
+    });
+    if (options.onData && child?.stdout) {
+      child.stdout.on("data", (data) => options.onData(data.toString()));
+    }
+    if (options.onData && child?.stderr) {
+      child.stderr.on("data", (data) => options.onData(data.toString()));
+    }
+  });
+}
 
 async function checkOllamaRunning() {
   try {
@@ -12,10 +30,12 @@ async function checkOllamaRunning() {
 }
 
 async function startOllamaService() {
+  if (await checkOllamaRunning()) return true;
+
   const isWin = process.platform === "win32";
   const startCmd = isWin
     ? "powershell -NoProfile -Command \"Start-Process -FilePath $env:localappdata\\Programs\\Ollama\\Ollama.exe -WindowStyle Hidden\""
-    : "systemctl start ollama || service ollama start";
+    : "systemctl start ollama || service ollama start || nohup ollama serve > /dev/null 2>&1 &";
   
   try {
     exec(startCmd, { windowsHide: true });
@@ -27,6 +47,20 @@ async function startOllamaService() {
   } catch (e) {
     console.error("Failed to start Ollama background process:", e.message);
   }
+
+  // Secondary fallback: execute ollama serve directly
+  if (!isWin) {
+    try {
+      exec("nohup ollama serve > /dev/null 2>&1 &");
+      for (let i = 0; i < 10; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (await checkOllamaRunning()) return true;
+      }
+    } catch (e) {
+      console.error("Fallback ollama serve execution failed:", e.message);
+    }
+  }
+
   return false;
 }
 
@@ -45,16 +79,16 @@ async function bootstrapOllama() {
     if (isWin) {
       // Check if winget is available
       try {
-        execSync("winget --version");
+        await execAsync("winget --version");
       } catch (e) {
         throw new Error("winget package manager is not available. Please install Ollama manually from https://ollama.com.");
       }
 
       console.log("Installing Ollama via winget...");
-      execSync("winget install Ollama.Ollama --accept-source-agreements --accept-package-agreements", { stdio: "inherit" });
+      await execAsync("winget install Ollama.Ollama --accept-source-agreements --accept-package-agreements");
     } else {
       console.log("Installing Ollama via curl script...");
-      execSync("curl -fsSL https://ollama.com/install.sh | sh", { stdio: "inherit" });
+      await execAsync("curl -fsSL https://ollama.com/install.sh | sh");
     }
 
     if (await startOllamaService()) {

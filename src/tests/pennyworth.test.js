@@ -378,6 +378,16 @@ test("Bootstrap Local Ollama Installation Flow", async (t) => {
     assert.strictEqual(savedState.defaultProvider, "ollama");
     assert.strictEqual(savedState.providers.ollama.model, "qwen2.5:1.5b");
   });
+
+  await t.test("should trigger native notification IPC handler", async () => {
+    const { registerIpcHandlers } = require("../main/ipc-handlers");
+    registerIpcHandlers(() => null);
+    const showNotificationHandler = registeredIpcHandlers["pennyworth:show-native-notification"];
+    assert.ok(showNotificationHandler, "pennyworth:show-native-notification handler should be registered");
+
+    const res = await showNotificationHandler(null, { title: "Test Notification", body: "Test body text" });
+    assert.ok(res.ok || res.error);
+  });
 });
 
 test("Security Hardening & Redesign Checks", async (t) => {

@@ -599,12 +599,15 @@ async function init() {
       const progressBar = document.getElementById("setupProgressBar");
       const progressStatus = document.getElementById("setupProgressStatus");
       if (progressBar && progressStatus) {
-        if (data.status === "downloading" && data.total > 0) {
+        if (data.total > 0 && typeof data.completed === "number") {
           const pct = Math.round((data.completed / data.total) * 100);
           progressBar.style.width = `${50 + (pct * 0.4)}%`;
-          progressStatus.textContent = `Downloading model: ${pct}% complete (${(data.completed / 1024 / 1024).toFixed(0)} / ${(data.total / 1024 / 1024).toFixed(0)} MB)...`;
-        } else {
-          progressStatus.textContent = data.status || progressStatus.textContent;
+          const mbDone = (data.completed / 1024 / 1024).toFixed(1);
+          const mbTotal = (data.total / 1024 / 1024).toFixed(1);
+          const hash = data.digest ? ` (${data.digest.substring(7, 19)})` : "";
+          progressStatus.textContent = `Downloading layer${hash}: ${pct}% complete (${mbDone} / ${mbTotal} MB)...`;
+        } else if (data.status) {
+          progressStatus.textContent = `Model setup: ${data.status}`;
         }
       }
     });

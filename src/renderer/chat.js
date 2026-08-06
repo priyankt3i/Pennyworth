@@ -397,7 +397,17 @@ function appendWelcomeSetupCard() {
       }
 
       progressBar.style.width = "40%";
-      progressStatus.textContent = "Ollama installed. Starting local service...";
+      progressStatus.textContent = "Ollama installed & service running.";
+
+      if (window.pennyworth.showNativeNotification) {
+        window.pennyworth.showNativeNotification({
+          title: "Pennyworth - Ollama Installed",
+          body: "Ollama service installed & started successfully. Now downloading model..."
+        });
+      }
+      if (typeof pushNotification === "function") {
+        pushNotification("ok", "Ollama installed & background service running.");
+      }
 
       progressBar.style.width = "50%";
       progressStatus.textContent = "Downloading Qwen 2.5 Coder 1.5B model from Ollama registry...";
@@ -405,6 +415,16 @@ function appendWelcomeSetupCard() {
       const pullRes = await window.pennyworth.bootstrapPullModel("qwen2.5:1.5b");
       if (!pullRes.ok) {
         throw new Error(pullRes.error || "Failed to download model.");
+      }
+
+      if (window.pennyworth.showNativeNotification) {
+        window.pennyworth.showNativeNotification({
+          title: "Pennyworth - Model Pulled",
+          body: "Model qwen2.5:1.5b downloaded successfully!"
+        });
+      }
+      if (typeof pushNotification === "function") {
+        pushNotification("ok", "Model qwen2.5:1.5b downloaded successfully.");
       }
 
       progressBar.style.width = "90%";
@@ -418,6 +438,13 @@ function appendWelcomeSetupCard() {
       progressBar.style.width = "100%";
       progressStatus.textContent = "Success! Local setup complete. Reloading application...";
       progressTitle.textContent = "Setup Successful!";
+
+      if (window.pennyworth.showNativeNotification) {
+        window.pennyworth.showNativeNotification({
+          title: "Pennyworth Ready",
+          body: "Local setup complete! You can now start using Pennyworth with Qwen 2.5 Coder."
+        });
+      }
       
       setTimeout(async () => {
         wrapper.remove();
@@ -431,6 +458,16 @@ function appendWelcomeSetupCard() {
       progressStatus.textContent = `Error: ${err.message}`;
       progressBar.style.width = "0%";
       progressTitle.textContent = "Setup Failed";
+
+      if (window.pennyworth.showNativeNotification) {
+        window.pennyworth.showNativeNotification({
+          title: "Pennyworth - Setup Error",
+          body: `Ollama setup failed: ${err.message}`
+        });
+      }
+      if (typeof pushNotification === "function") {
+        pushNotification("error", `Setup failed: ${err.message}`);
+      }
     }
   });
 }

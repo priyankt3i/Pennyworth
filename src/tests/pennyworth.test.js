@@ -107,6 +107,12 @@ Module.prototype.require = function(id) {
           }
           return { status: 200, data: { models: [{ name: "qwen2.5:1.5b" }] } };
         }
+        if (url.includes("api.openai.com/v1/models")) {
+          return { status: 200, data: { data: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }, { id: "o1-mini" }] } };
+        }
+        if (url.includes("generativelanguage.googleapis.com")) {
+          return { status: 200, data: { models: [{ name: "models/gemini-2.0-flash", supportedGenerationMethods: ["generateContent"] }, { name: "models/gemini-1.5-pro", supportedGenerationMethods: ["generateContent"] }] } };
+        }
         return { status: 200, data: {} };
       },
       post: async (url, data) => {
@@ -119,6 +125,35 @@ Module.prototype.require = function(id) {
             }
           });
           return { status: 200, data: s };
+        }
+        if (url.includes("generativelanguage.googleapis.com")) {
+          return {
+            status: 200,
+            data: {
+              candidates: [
+                {
+                  content: {
+                    parts: [{ text: "Hello from Gemini API!" }]
+                  }
+                }
+              ]
+            }
+          };
+        }
+        if (url.includes("api.openai.com")) {
+          return {
+            status: 200,
+            data: {
+              choices: [
+                {
+                  message: {
+                    role: "assistant",
+                    content: "Hello from OpenAI API!"
+                  }
+                }
+              ]
+            }
+          };
         }
         return { status: 200, data: {} };
       }
@@ -455,5 +490,86 @@ test("Screenshot capture handlers", async (t) => {
     assert.strictEqual(result.dataUri, "data:image/png;base64,mockdisplay2data");
     assert.strictEqual(result.imageDataUrl, "data:image/png;base64,mockdisplay2data");
     assert.strictEqual(result.screenName, "Display 2");
+  });
+});
+
+test("OpenAI & Gemini Model Discovery & Masked API Key", async (t) => {
+  const { setStoredApiKey } = require("../main/vault");
+  const { getProviderStateForUi } = require("../main/provider-config");
+
+  await t.test("should list OpenAI models when API key is provided or stored", async () => {
+    const listOpenAIHandler = registeredIpcHandlers["pennyworth:list-openai-models"];
+    assert.ok(listOpenAIHandler, "pennyworth:list-openai-models handler should be registered");
+
+    const res = await listOpenAIHandler(null, { apiKey: "sk-testkey12345" });
+    assert.strictEqual(res.ok, true);
+    assert.ok(Array.isArray(res.models));
+    assert.ok(res.models.includes("gpt-4o"));
+    assert.ok(res.models.includes("gpt-4o-mini"));
+  });
+
+  await t.test("should list Gemini models when API key is provided or stored", async () => {
+    const listGeminiHandler = registeredIpcHandlers["pennyworth:list-gemini-models"];
+    assert.ok(listGeminiHandler, "pennyworth:list-gemini-models handler should be registered");
+
+    const res = await listGeminiHandler(null, { apiKey: "AIzaSyTestKey123" });
+    assert.strictEqual(res.ok, true);
+    assert.ok(Array.isArray(res.models));
+    assert.ok(res.models.includes("gemini-2.0-flash"));
+    assert.ok(res.models.includes("gemini-1.5-pro"));
+  });
+
+  await t.test("should return redacted API key in getProviderStateForUi when key is saved", async () => {
+    await setStoredApiKey("openai", "sk-proj-secretkey1234");
+    await setStoredApiKey("gemini", "AIzaSySecretKey9876");
+
+    const uiState = await getProviderStateForUi();
+    assert.strictEqual(uiState.providers.openai.hasApiKey, true);
+    assert.strictEqual(uiState.providers.openai.maskedApiKey, "••••••••1234");
+    assert.strictEqual(uiState.providers.gemini.hasApiKey, true);
+    assert.strictEqual(uiState.providers.gemini.maskedApiKey, "••••••••9876");
+  });
+
+  await t.test("should get successful chat completion response from Gemini API", async () => {
+    const { askWithFailover } = require("../core/providers");
+    const providerState = {
+      defaultProvider: "gemini",
+      providers: {
+        gemini: { enabled: true, model: "gemini-2.0-flash", apiKey: "AIzaSyValidKey123" }
+      }
+    };
+
+    const res = await askWithFailover(providerState, { userPrompt: "Hello Gemini", history: [] });
+    assert.strictEqual(res.provider, "gemini");
+    assert.strictEqual(res.reply, "Hello from Gemini API!");
+  });
+
+  await t.test("should get successful chat completion response from OpenAI API", async () => {
+    const { askWithFailover } = require("../core/providers");
+    const providerState = {
+      defaultProvider: "openai",
+      providers: {
+        openai: { enabled: true, model: "gpt-4o-mini", apiKey: "sk-validkey123" }
+      }
+    };
+
+    const res = await askWithFailover(providerState, { userPrompt: "Hello OpenAI", history: [] });
+    assert.strictEqual(res.provider, "openai");
+    assert.strictEqual(res.reply, "Hello from OpenAI API!");
+  });
+});
+
+test("Token Saver Mode System Prompt Directive", async (t) => {
+  const { normalizeAgentContext } = require("../main/profiles");
+
+  await t.test("should correctly normalize maxToolSteps preference", () => {
+    const defaultVal = normalizeAgentContext({});
+    assert.strictEqual(defaultVal.maxToolSteps, 10);
+
+    const customVal = normalizeAgentContext({ maxToolSteps: 15 });
+    assert.strictEqual(customVal.maxToolSteps, 15);
+
+    const invalidVal = normalizeAgentContext({ maxToolSteps: 999 });
+    assert.strictEqual(invalidVal.maxToolSteps, 10);
   });
 });

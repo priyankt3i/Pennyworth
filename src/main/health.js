@@ -66,6 +66,61 @@ async function listOllamaModels(baseUrl) {
   return names;
 }
 
+async function listOpenAIModels(apiKey) {
+  const providerState = getProviderState();
+  const httpsAgent = getCustomHttpsAgent(providerState?.customCaCertPath);
+  const keyToUse = apiKey || (await getStoredApiKey("openai")) || process.env.OPENAI_API_KEY || "";
+  if (!keyToUse) {
+    throw new Error("OpenAI API key is missing.");
+  }
+  const response = await axios.get("https://api.openai.com/v1/models", {
+    headers: { Authorization: `Bearer ${keyToUse}` },
+    timeout: 5000,
+    httpsAgent: httpsAgent || undefined,
+  });
+  const rawList = Array.isArray(response?.data?.data) ? response.data.data : [];
+  const modelIds = rawList
+    .map((m) => String(m?.id || "").trim())
+    .filter(Boolean);
+
+  const chatModels = modelIds.filter(
+    (id) => id.startsWith("gpt-") || id.startsWith("o1") || id.startsWith("o3") || id.startsWith("chatgpt-")
+  );
+  const otherModels = modelIds.filter((id) => !chatModels.includes(id));
+  chatModels.sort();
+  otherModels.sort();
+  const sorted = Array.from(new Set([...chatModels, ...otherModels]));
+  return sorted.length > 0 ? sorted : modelIds;
+}
+
+async function listGeminiModels(apiKey) {
+  const providerState = getProviderState();
+  const httpsAgent = getCustomHttpsAgent(providerState?.customCaCertPath);
+  const keyToUse = apiKey || (await getStoredApiKey("gemini")) || process.env.GEMINI_API_KEY || "";
+  if (!keyToUse) {
+    throw new Error("Gemini API key is missing.");
+  }
+  const response = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${keyToUse}`, {
+    timeout: 5000,
+    httpsAgent: httpsAgent || undefined,
+  });
+  const rawList = Array.isArray(response?.data?.models) ? response.data.models : [];
+  const validModels = rawList
+    .filter((m) => {
+      const methods = Array.isArray(m?.supportedGenerationMethods) ? m.supportedGenerationMethods : [];
+      return methods.includes("generateContent") || (m?.name && String(m.name).includes("gemini"));
+    })
+    .map((m) => {
+      const name = String(m?.name || "").trim();
+      return name.replace(/^models\//, "");
+    })
+    .filter(Boolean);
+
+  const sorted = Array.from(new Set(validModels)).sort();
+  return sorted;
+}
+
+
 async function checkOllamaHealth(config, httpsAgent) {
   if (!config?.enabled) {
     return { state: "disabled", connected: false, message: "Disabled in settings." };
@@ -206,6 +261,8 @@ async function getProviderHealth(options = {}) {
 
 module.exports = {
   listOllamaModels,
+  listOpenAIModels,
+  listGeminiModels,
   invalidateProviderHealthCache,
   getProviderHealth,
 };

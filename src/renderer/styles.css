@@ -515,6 +515,9 @@ select:disabled {
 }
 
 .trace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 6px;
   color: var(--muted);
   font-family: var(--font-mono);
@@ -522,6 +525,39 @@ select:disabled {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.trace-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trace-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.62rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1.2;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+}
+
+.trace-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.dark-theme .trace-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  border-color: var(--muted);
 }
 
 #traceContent {

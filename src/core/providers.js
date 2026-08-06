@@ -10,14 +10,23 @@ const {
   runAgentTooling,
 } = require("./tools");
 
+function getAgentMaxSteps(context) {
+  const raw = parseInt(context?.agentContext?.maxToolSteps, 10);
+  return Number.isInteger(raw) && raw >= 1 && raw <= 50 ? raw : 10;
+}
+
 function buildSystemPrompt(context) {
-  const { systemContext, distroProfile, retrievedDocs, memories = [] } = context;
+  const { systemContext, distroProfile, retrievedDocs, memories = [], agentContext } = context;
   const memorySection = memories.length > 0
     ? [
         "Butler Memory (Persistent facts you have learned/saved about this system/user):",
         ...memories.map((m) => `- [${new Date(m.at).toLocaleDateString()}] ${m.fact}`),
       ].join("\n")
     : "Butler Memory: No persistent facts recorded yet.";
+
+  const tokenSaverDirective = agentContext?.tokenSaverMode
+    ? "\n\nTOKEN SAVER MODE ACTIVE: Be extremely concise, direct, and token-efficient. Omit greetings, pleasantries, and filler words. Maintain 100% technical accuracy, full code blocks, and exact answers."
+    : "";
 
   return [
     "You are Hermes, the advanced agentic PC and Linux system handler inside Pennyworth.",
@@ -38,7 +47,7 @@ function buildSystemPrompt(context) {
     JSON.stringify(distroProfile, null, 2),
     "Retrieved local docs context:",
     JSON.stringify(retrievedDocs, null, 2),
-  ].join("\n\n");
+  ].join("\n\n") + tokenSaverDirective;
 }
 
 function parseImageDataUrl(dataUrl) {
@@ -314,7 +323,8 @@ async function askOllama(config, context) {
   const messages = buildOllamaMessages(context);
   const tools = getOpenAIToolDefinitions(); // Ollama uses OpenAI-compatible tool specifications
 
-  for (let step = 0; step < 4; step += 1) {
+  const maxSteps = getAgentMaxSteps(context);
+  for (let step = 0; step < maxSteps; step += 1) {
     checkCancellation();
     const response = await axios.post(`${baseUrl}/api/chat`, {
       model,
@@ -412,7 +422,7 @@ async function askOllama(config, context) {
     return reply;
   }
 
-  throw new Error("Ollama tool-calling loop exceeded maximum steps.");
+  throw new Error(`Ollama tool-calling loop exceeded maximum steps (${maxSteps}).`);
 }
 
 async function askOpenAI(config, context) {
@@ -425,7 +435,8 @@ async function askOpenAI(config, context) {
   const messages = buildOpenAIMessages(context);
   const tools = getOpenAIToolDefinitions();
 
-  for (let step = 0; step < 4; step += 1) {
+  const maxSteps = getAgentMaxSteps(context);
+  for (let step = 0; step < maxSteps; step += 1) {
     checkCancellation();
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
@@ -487,7 +498,7 @@ async function askOpenAI(config, context) {
     return finalText;
   }
 
-  throw new Error("OpenAI tool-calling loop exceeded maximum steps.");
+  throw new Error(`OpenAI tool-calling loop exceeded maximum steps (${maxSteps}).`);
 }
 
 function extractGeminiText(candidate) {
@@ -510,7 +521,8 @@ async function askGemini(config, context) {
     throw new Error("GEMINI_API_KEY is missing.");
   }
 
-  const model = config.model || process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  const rawModel = config.model || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const model = String(rawModel).trim().replace(/^models\//, "");
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const contents = buildGeminiContents(context);
@@ -518,7 +530,8 @@ async function askGemini(config, context) {
     parts: [{ text: buildSystemPrompt(context) }],
   };
 
-  for (let step = 0; step < 4; step += 1) {
+  const maxSteps = getAgentMaxSteps(context);
+  for (let step = 0; step < maxSteps; step += 1) {
     checkCancellation();
     const response = await axios.post(url, {
       systemInstruction,
@@ -572,7 +585,7 @@ async function askGemini(config, context) {
     return text;
   }
 
-  throw new Error("Gemini tool-calling loop exceeded maximum steps.");
+  throw new Error(`Gemini tool-calling loop exceeded maximum steps (${maxSteps}).`);
 }
 
 async function askProvider(providerName, providerConfig, context) {
@@ -586,6 +599,25 @@ async function askProvider(providerName, providerConfig, context) {
     return askGemini(providerConfig, context);
   }
   throw new Error(`Unsupported provider: ${providerName}`);
+}
+
+function formatProviderError(error) {
+  const status = error?.response?.status;
+  const apiMessage =
+    error?.response?.data?.error?.message ||
+    error?.response?.data?.error ||
+    error?.response?.data?.message;
+
+  if (status && apiMessage) {
+    return `HTTP ${status}: ${String(apiMessage)}`;
+  }
+  if (status) {
+    return `HTTP ${status}: ${error?.message || "Request failed"}`;
+  }
+  if (error?.code) {
+    return `${error.code}: ${error.message}`;
+  }
+  return error?.message || "Provider request failed";
 }
 
 async function askWithFailover(providerState, context) {
@@ -629,11 +661,12 @@ async function askWithFailover(providerState, context) {
       });
       return { provider: providerName, reply, toolTrace: traceContext.toolTrace };
     } catch (error) {
-      lastError = error;
+      const formattedError = formatProviderError(error);
+      lastError = new Error(formattedError);
       pushTrace(traceContext, {
         stage: "provider_error",
         provider: providerName,
-        error: error.message,
+        error: formattedError,
       });
     }
   }

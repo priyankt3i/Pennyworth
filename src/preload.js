@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld("pennyworth", {
   getSettings: () => ipcRenderer.invoke("pennyworth:get-settings"),
   getProviderHealth: (payload) => ipcRenderer.invoke("pennyworth:get-provider-health", payload),
   listOllamaModels: (payload) => ipcRenderer.invoke("pennyworth:list-ollama-models", payload),
+  listOpenAIModels: (payload) => ipcRenderer.invoke("pennyworth:list-openai-models", payload),
+  listGeminiModels: (payload) => ipcRenderer.invoke("pennyworth:list-gemini-models", payload),
   saveSettings: (payload) => ipcRenderer.invoke("pennyworth:save-settings", payload),
   getSystemContext: () => ipcRenderer.invoke("pennyworth:get-system-context"),
   listDisplays: () => ipcRenderer.invoke("pennyworth:list-displays"),

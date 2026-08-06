@@ -1,16 +1,6 @@
 const { storeGet, storeSet } = require("./store");
 const { getStoredApiKey } = require("./vault");
 
-function hasEnvKeyForProvider(providerName) {
-  if (providerName === "openai") {
-    return Boolean(process.env.OPENAI_API_KEY);
-  }
-  if (providerName === "gemini") {
-    return Boolean(process.env.GEMINI_API_KEY);
-  }
-  return false;
-}
-
 function getProviderState() {
   return storeGet("providerConfig", {
     defaultProvider: "ollama",
@@ -18,7 +8,7 @@ function getProviderState() {
     providers: {
       ollama: { enabled: true, baseUrl: "http://127.0.0.1:11434", model: "llama3.2" },
       openai: { enabled: false, model: "gpt-4o-mini" },
-      gemini: { enabled: false, model: "gemini-2.0-flash" },
+      gemini: { enabled: false, model: "gemini-2.5-flash" },
     },
   });
 }
@@ -51,7 +41,7 @@ function normalizeProviderState(base, override) {
     merged.providers.ollama.baseUrl || "http://127.0.0.1:11434";
   merged.providers.ollama.model = merged.providers.ollama.model || "llama3.2";
   merged.providers.openai.model = merged.providers.openai.model || "gpt-4o-mini";
-  merged.providers.gemini.model = merged.providers.gemini.model || "gemini-2.0-flash";
+  merged.providers.gemini.model = merged.providers.gemini.model || "gemini-2.5-flash";
 
   if (!merged.providers[merged.defaultProvider]) {
     merged.defaultProvider = "ollama";
@@ -80,8 +70,19 @@ function saveProviderState(providerConfig) {
 
 async function getProviderStateForUi() {
   const providerState = getProviderState();
-  const openaiStored = Boolean(await getStoredApiKey("openai"));
-  const geminiStored = Boolean(await getStoredApiKey("gemini"));
+  const openaiStoredKey = await getStoredApiKey("openai");
+  const openaiRawKey = openaiStoredKey || process.env.OPENAI_API_KEY || "";
+  const openaiHasKey = Boolean(openaiRawKey);
+  const openaiMaskedKey = openaiHasKey
+    ? "••••••••" + (openaiRawKey.length >= 4 ? openaiRawKey.slice(-4) : "")
+    : "";
+
+  const geminiStoredKey = await getStoredApiKey("gemini");
+  const geminiRawKey = geminiStoredKey || process.env.GEMINI_API_KEY || "";
+  const geminiHasKey = Boolean(geminiRawKey);
+  const geminiMaskedKey = geminiHasKey
+    ? "••••••••" + (geminiRawKey.length >= 4 ? geminiRawKey.slice(-4) : "")
+    : "";
 
   return {
     secureStorageAvailable: require("electron").safeStorage.isEncryptionAvailable(),
@@ -96,12 +97,14 @@ async function getProviderStateForUi() {
       openai: {
         enabled: providerState.providers.openai.enabled,
         model: providerState.providers.openai.model,
-        hasApiKey: openaiStored || hasEnvKeyForProvider("openai"),
+        hasApiKey: openaiHasKey,
+        maskedApiKey: openaiMaskedKey,
       },
       gemini: {
         enabled: providerState.providers.gemini.enabled,
         model: providerState.providers.gemini.model,
-        hasApiKey: geminiStored || hasEnvKeyForProvider("gemini"),
+        hasApiKey: geminiHasKey,
+        maskedApiKey: geminiMaskedKey,
       },
     },
   };

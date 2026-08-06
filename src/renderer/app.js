@@ -34,20 +34,13 @@ function applyProviderAvailabilityUi(health = {}, showInChat = false) {
   showNoProviderGuidance(showInChat, reason);
   return false;
 }
-
-function isDevModeEnabled() {
-  if (el.devMode) {
-    return Boolean(el.devMode.checked);
-  }
-  return Boolean(state.runtime?.agentContext?.devMode);
-}
-
 function updateTracePanelVisibility() {
   if (!el.tracePanel || !el.traceContent) {
     return;
   }
 
-  const show = Array.isArray(state.lastToolTrace) && state.lastToolTrace.length > 0;
+  const devModeEnabled = state.runtime?.agentContext?.devMode !== undefined ? Boolean(state.runtime.agentContext.devMode) : Boolean(el.devMode?.checked);
+  const show = devModeEnabled && Array.isArray(state.lastToolTrace) && state.lastToolTrace.length > 0;
   el.tracePanel.classList.toggle("hidden", !show);
 
   if (show && (!Array.isArray(state.lastToolTrace) || !state.lastToolTrace.length)) {
@@ -624,6 +617,18 @@ async function init() {
       askAgent();
     }
   });
+
+  if (el.promptInput) {
+    el.promptInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        if (el.sendBtn.dataset.action === "stop") {
+          return;
+        }
+        askAgent();
+      }
+    });
+  }
   el.captureBtn.addEventListener("click", captureScreenFlow);
   el.voiceBtn.addEventListener("click", startVoiceInput);
   el.settingsBtn.addEventListener("click", openSettingsModal);
@@ -765,6 +770,10 @@ async function init() {
       setActiveProviderTab(provider);
       if (provider === "ollama") {
         refreshOllamaModels(false);
+      } else if (provider === "openai") {
+        refreshOpenAIModels(false);
+      } else if (provider === "gemini") {
+        refreshGeminiModels(false);
       }
     });
   });
@@ -773,6 +782,7 @@ async function init() {
     el.clearOpenAIBtn.addEventListener("click", () => {
       el.openaiApiKey.value = "";
       state.clearApiKeys.openai = true;
+      setOpenAIModelOptions([], "gpt-4o-mini");
       setStatus("OpenAI API key will be cleared on save.", "ok");
     });
   }
@@ -781,6 +791,7 @@ async function init() {
     el.clearGeminiBtn.addEventListener("click", () => {
       el.geminiApiKey.value = "";
       state.clearApiKeys.gemini = true;
+      setGeminiModelOptions([], "gemini-2.5-flash");
       setStatus("Gemini API key will be cleared on save.", "ok");
     });
   }
@@ -791,6 +802,9 @@ async function init() {
         state.clearApiKeys.openai = false;
       }
     });
+    el.openaiApiKey.addEventListener("change", () => {
+      refreshOpenAIModels(false);
+    });
   }
 
   if (el.geminiApiKey) {
@@ -798,6 +812,9 @@ async function init() {
       if (el.geminiApiKey.value.trim()) {
         state.clearApiKeys.gemini = false;
       }
+    });
+    el.geminiApiKey.addEventListener("change", () => {
+      refreshGeminiModels(false);
     });
   }
 
@@ -808,6 +825,29 @@ async function init() {
     el.devMode.addEventListener("change", () => {
       updateTracePanelVisibility();
       renderToolTrace(state.lastToolTrace);
+    });
+  }
+
+  if (el.copyTraceBtn) {
+    el.copyTraceBtn.addEventListener("click", async () => {
+      if (!el.traceContent || !el.traceContent.textContent) return;
+      try {
+        await navigator.clipboard.writeText(el.traceContent.textContent);
+        const originalText = el.copyTraceBtn.textContent;
+        el.copyTraceBtn.textContent = "Copied!";
+        setTimeout(() => {
+          if (el.copyTraceBtn) el.copyTraceBtn.textContent = originalText;
+        }, 1500);
+      } catch (err) {
+        console.error("Failed to copy tool trace:", err);
+      }
+    });
+  }
+
+  if (el.clearTraceBtn) {
+    el.clearTraceBtn.addEventListener("click", () => {
+      state.lastToolTrace = [];
+      renderToolTrace([]);
     });
   }
 

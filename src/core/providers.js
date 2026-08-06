@@ -510,7 +510,8 @@ async function askGemini(config, context) {
     throw new Error("GEMINI_API_KEY is missing.");
   }
 
-  const model = config.model || process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  const rawModel = config.model || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const model = String(rawModel).trim().replace(/^models\//, "");
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const contents = buildGeminiContents(context);
@@ -588,6 +589,25 @@ async function askProvider(providerName, providerConfig, context) {
   throw new Error(`Unsupported provider: ${providerName}`);
 }
 
+function formatProviderError(error) {
+  const status = error?.response?.status;
+  const apiMessage =
+    error?.response?.data?.error?.message ||
+    error?.response?.data?.error ||
+    error?.response?.data?.message;
+
+  if (status && apiMessage) {
+    return `HTTP ${status}: ${String(apiMessage)}`;
+  }
+  if (status) {
+    return `HTTP ${status}: ${error?.message || "Request failed"}`;
+  }
+  if (error?.code) {
+    return `${error.code}: ${error.message}`;
+  }
+  return error?.message || "Provider request failed";
+}
+
 async function askWithFailover(providerState, context) {
   currentSessionCancelled = false;
   const { defaultProvider, providers, customCaCertPath } = providerState;
@@ -629,11 +649,12 @@ async function askWithFailover(providerState, context) {
       });
       return { provider: providerName, reply, toolTrace: traceContext.toolTrace };
     } catch (error) {
-      lastError = error;
+      const formattedError = formatProviderError(error);
+      lastError = new Error(formattedError);
       pushTrace(traceContext, {
         stage: "provider_error",
         provider: providerName,
-        error: error.message,
+        error: formattedError,
       });
     }
   }

@@ -6,3 +6,7 @@ data/cache/
 *.log
 .env.example
 package-lock.json
+.agents/
+.claude/
+agent/
+data/

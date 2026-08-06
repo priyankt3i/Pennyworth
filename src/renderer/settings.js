@@ -117,6 +117,170 @@ async function refreshOllamaModels(showStatus = false) {
   }
 }
 
+function getCurrentOpenAIModelValue(fallback = "gpt-4o-mini") {
+  const current = String(el.openaiModel?.value || "").trim();
+  if (current) {
+    return current;
+  }
+  return String(fallback || "gpt-4o-mini").trim() || "gpt-4o-mini";
+}
+
+function setOpenAIModelOptions(models, preferredModel) {
+  if (!el.openaiModel) {
+    return;
+  }
+
+  const safePreferred = getCurrentOpenAIModelValue(preferredModel);
+  const uniqueModels = Array.from(
+    new Set((Array.isArray(models) ? models : []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+
+  el.openaiModel.innerHTML = "";
+
+  if (!uniqueModels.length) {
+    const fallback = document.createElement("option");
+    fallback.value = safePreferred;
+    fallback.textContent = `${safePreferred} (configured)`;
+    el.openaiModel.appendChild(fallback);
+    el.openaiModel.value = safePreferred;
+    return;
+  }
+
+  uniqueModels.forEach((model) => {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model;
+    el.openaiModel.appendChild(option);
+  });
+
+  if (uniqueModels.includes(safePreferred)) {
+    el.openaiModel.value = safePreferred;
+  } else {
+    const configured = document.createElement("option");
+    configured.value = safePreferred;
+    configured.textContent = `${safePreferred} (invalid/unavailable)`;
+    el.openaiModel.appendChild(configured);
+
+    const validDefault = uniqueModels.find((m) => m === "gpt-4o-mini" || m === "gpt-4o") || uniqueModels[0];
+    el.openaiModel.value = validDefault;
+  }
+}
+
+async function refreshOpenAIModels(showStatus = false) {
+  if (!el.openaiApiKey || !el.openaiModel) {
+    return;
+  }
+
+  const currentModel = getCurrentOpenAIModelValue("gpt-4o-mini");
+  const rawKeyInput = String(el.openaiApiKey.value || "").trim();
+  const apiKeyToUse = rawKeyInput.includes("•") ? "" : rawKeyInput;
+
+  try {
+    const result = assertOk(
+      await window.pennyworth.listOpenAIModels({ apiKey: apiKeyToUse }),
+      "Failed to fetch OpenAI model list."
+    );
+
+    const models = Array.isArray(result.models) ? result.models : [];
+    setOpenAIModelOptions(models, currentModel);
+
+    if (showStatus) {
+      const message =
+        models.length > 0
+          ? `Loaded ${models.length} OpenAI model(s).`
+          : "Connected to OpenAI, but no models were returned.";
+      setStatus(message, models.length > 0 ? "ok" : "error");
+    }
+  } catch (error) {
+    setOpenAIModelOptions([], currentModel);
+    if (showStatus) {
+      setStatus(`Could not load OpenAI models. ${extractErrorText(error)}`, "error");
+    }
+  }
+}
+
+function getCurrentGeminiModelValue(fallback = "gemini-2.5-flash") {
+  const current = String(el.geminiModel?.value || "").trim();
+  if (current) {
+    return current;
+  }
+  return String(fallback || "gemini-2.5-flash").trim() || "gemini-2.5-flash";
+}
+
+function setGeminiModelOptions(models, preferredModel) {
+  if (!el.geminiModel) {
+    return;
+  }
+
+  const safePreferred = getCurrentGeminiModelValue(preferredModel);
+  const uniqueModels = Array.from(
+    new Set((Array.isArray(models) ? models : []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+
+  el.geminiModel.innerHTML = "";
+
+  if (!uniqueModels.length) {
+    const fallback = document.createElement("option");
+    fallback.value = safePreferred;
+    fallback.textContent = `${safePreferred} (configured)`;
+    el.geminiModel.appendChild(fallback);
+    el.geminiModel.value = safePreferred;
+    return;
+  }
+
+  uniqueModels.forEach((model) => {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model;
+    el.geminiModel.appendChild(option);
+  });
+
+  if (uniqueModels.includes(safePreferred)) {
+    el.geminiModel.value = safePreferred;
+  } else {
+    const configured = document.createElement("option");
+    configured.value = safePreferred;
+    configured.textContent = `${safePreferred} (invalid/unavailable)`;
+    el.geminiModel.appendChild(configured);
+
+    const validDefault = uniqueModels.find((m) => m === "gemini-2.5-flash" || m === "gemini-3.5-flash") || uniqueModels[0];
+    el.geminiModel.value = validDefault;
+  }
+}
+
+async function refreshGeminiModels(showStatus = false) {
+  if (!el.geminiApiKey || !el.geminiModel) {
+    return;
+  }
+
+  const currentModel = getCurrentGeminiModelValue("gemini-2.5-flash");
+  const rawKeyInput = String(el.geminiApiKey.value || "").trim();
+  const apiKeyToUse = rawKeyInput.includes("•") ? "" : rawKeyInput;
+
+  try {
+    const result = assertOk(
+      await window.pennyworth.listGeminiModels({ apiKey: apiKeyToUse }),
+      "Failed to fetch Gemini model list."
+    );
+
+    const models = Array.isArray(result.models) ? result.models : [];
+    setGeminiModelOptions(models, currentModel);
+
+    if (showStatus) {
+      const message =
+        models.length > 0
+          ? `Loaded ${models.length} Gemini model(s).`
+          : "Connected to Gemini, but no models were returned.";
+      setStatus(message, models.length > 0 ? "ok" : "error");
+    }
+  } catch (error) {
+    setGeminiModelOptions([], currentModel);
+    if (showStatus) {
+      setStatus(`Could not load Gemini models. ${extractErrorText(error)}`, "error");
+    }
+  }
+}
+
 function getProviderFromButton(button) {
   return String(button?.dataset?.provider || "").trim().toLowerCase();
 }
@@ -282,11 +446,12 @@ function populateSettingsForm(settingsPayload) {
   el.ollamaBaseUrl.value = providerConfig.providers.ollama.baseUrl;
   setOllamaModelOptions([], providerConfig.providers.ollama.model);
 
-  el.openaiModel.value = providerConfig.providers.openai.model;
-  el.openaiApiKey.value = "";
+  el.openaiApiKey.value = providerConfig.providers.openai.maskedApiKey || "";
+  setOpenAIModelOptions([], providerConfig.providers.openai.model);
 
-  el.geminiModel.value = providerConfig.providers.gemini.model;
-  el.geminiApiKey.value = "";
+  el.geminiApiKey.value = providerConfig.providers.gemini.maskedApiKey || "";
+  setGeminiModelOptions([], providerConfig.providers.gemini.model);
+
   state.clearApiKeys.openai = false;
   state.clearApiKeys.gemini = false;
   setActiveProviderTab(getActiveProviderFromConfig(providerConfig));
@@ -310,6 +475,10 @@ async function openSettingsModal() {
     );
     if (state.activeProviderTab === "ollama") {
       refreshOllamaModels(false);
+    } else if (state.activeProviderTab === "openai") {
+      refreshOpenAIModels(false);
+    } else if (state.activeProviderTab === "gemini") {
+      refreshGeminiModels(false);
     }
     refreshProviderHealth(false, false);
   } catch (error) {
@@ -319,8 +488,11 @@ async function openSettingsModal() {
 
 async function saveSettings() {
   const activeProvider = state.activeProviderTab || "ollama";
-  const openaiApiKey = el.openaiApiKey.value.trim();
-  const geminiApiKey = el.geminiApiKey.value.trim();
+  const rawOpenaiKey = el.openaiApiKey.value.trim();
+  const rawGeminiKey = el.geminiApiKey.value.trim();
+
+  const openaiApiKey = rawOpenaiKey.includes("•") ? "" : rawOpenaiKey;
+  const geminiApiKey = rawGeminiKey.includes("•") ? "" : rawGeminiKey;
 
   const payload = {
     agentContext: {

@@ -204,9 +204,6 @@
 
           <div id="llmPanelOpenAI" class="llm-panel hidden">
             <div class="provider-grid">
-              <label for="openaiModel">OpenAI Model</label>
-              <input id="openaiModel" type="text" />
-
               <label for="openaiApiKey">OpenAI API Key</label>
               <div class="api-key-wrap">
                 <input id="openaiApiKey" type="password" placeholder="Leave empty to keep current key" />
@@ -214,14 +211,14 @@
                   X
                 </button>
               </div>
+
+              <label for="openaiModel">OpenAI Model</label>
+              <select id="openaiModel"></select>
             </div>
           </div>
 
           <div id="llmPanelGemini" class="llm-panel hidden">
             <div class="provider-grid">
-              <label for="geminiModel">Gemini Model</label>
-              <input id="geminiModel" type="text" />
-
               <label for="geminiApiKey">Gemini API Key</label>
               <div class="api-key-wrap">
                 <input id="geminiApiKey" type="password" placeholder="Leave empty to keep current key" />
@@ -229,6 +226,9 @@
                   X
                 </button>
               </div>
+
+              <label for="geminiModel">Gemini Model</label>
+              <select id="geminiModel"></select>
             </div>
           </div>
         </section>

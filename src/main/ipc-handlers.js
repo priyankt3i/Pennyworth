@@ -9,7 +9,7 @@ const { getStoredApiKey, setStoredApiKey, clearStoredApiKey, getVaultStatus, set
 const { getSessionFilePath, listSessions, loadSession, deleteSession } = require("./sessions");
 const { checkOllamaRunning, startOllamaService, bootstrapOllama, bootstrapSetDefaultProvider } = require("./bootstrap");
 const { getProviderState, saveProviderState, getProviderStateForUi, normalizeProviderState } = require("./provider-config");
-const { listOllamaModels, invalidateProviderHealthCache, getProviderHealth } = require("./health");
+const { listOllamaModels, listOpenAIModels, listGeminiModels, invalidateProviderHealthCache, getProviderHealth } = require("./health");
 const { runtimeState, getAgentContextState } = require("./profiles");
 
 const { getSystemContext } = require("../core/system-context");
@@ -104,6 +104,26 @@ function registerIpcHandlers(getMainWindow) {
     try {
       const baseUrl = payload?.baseUrl || "http://127.0.0.1:11434";
       const models = await listOllamaModels(baseUrl);
+      return { ok: true, models };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("pennyworth:list-openai-models", async (_event, payload) => {
+    try {
+      const apiKey = payload?.apiKey || "";
+      const models = await listOpenAIModels(apiKey);
+      return { ok: true, models };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("pennyworth:list-gemini-models", async (_event, payload) => {
+    try {
+      const apiKey = payload?.apiKey || "";
+      const models = await listGeminiModels(apiKey);
       return { ok: true, models };
     } catch (error) {
       return { ok: false, error: error.message };

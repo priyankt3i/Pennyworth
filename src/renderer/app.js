@@ -765,6 +765,10 @@ async function init() {
       setActiveProviderTab(provider);
       if (provider === "ollama") {
         refreshOllamaModels(false);
+      } else if (provider === "openai") {
+        refreshOpenAIModels(false);
+      } else if (provider === "gemini") {
+        refreshGeminiModels(false);
       }
     });
   });
@@ -773,6 +777,7 @@ async function init() {
     el.clearOpenAIBtn.addEventListener("click", () => {
       el.openaiApiKey.value = "";
       state.clearApiKeys.openai = true;
+      setOpenAIModelOptions([], "gpt-4o-mini");
       setStatus("OpenAI API key will be cleared on save.", "ok");
     });
   }
@@ -781,6 +786,7 @@ async function init() {
     el.clearGeminiBtn.addEventListener("click", () => {
       el.geminiApiKey.value = "";
       state.clearApiKeys.gemini = true;
+      setGeminiModelOptions([], "gemini-2.5-flash");
       setStatus("Gemini API key will be cleared on save.", "ok");
     });
   }
@@ -791,6 +797,9 @@ async function init() {
         state.clearApiKeys.openai = false;
       }
     });
+    el.openaiApiKey.addEventListener("change", () => {
+      refreshOpenAIModels(false);
+    });
   }
 
   if (el.geminiApiKey) {
@@ -798,6 +807,9 @@ async function init() {
       if (el.geminiApiKey.value.trim()) {
         state.clearApiKeys.gemini = false;
       }
+    });
+    el.geminiApiKey.addEventListener("change", () => {
+      refreshGeminiModels(false);
     });
   }
 

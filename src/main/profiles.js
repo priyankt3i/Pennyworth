@@ -163,11 +163,15 @@ function applyAgentOverrides(systemContext, profile, agentContext) {
 }
 
 function normalizeAgentContext(input) {
+  const rawMaxSteps = parseInt(input?.maxToolSteps, 10);
+  const maxToolSteps = Number.isInteger(rawMaxSteps) && rawMaxSteps >= 1 && rawMaxSteps <= 50 ? rawMaxSteps : 10;
+
   return {
     docsRootUrlOverride: String(input?.docsRootUrlOverride || "").trim(),
     allowIpLocation: Boolean(input?.allowIpLocation),
     devMode: Boolean(input?.devMode),
     tokenSaverMode: Boolean(input?.tokenSaverMode),
+    maxToolSteps,
     theme: String(input?.theme || "light"),
   };
 }

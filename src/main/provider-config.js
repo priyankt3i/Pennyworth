@@ -1,16 +1,6 @@
 const { storeGet, storeSet } = require("./store");
 const { getStoredApiKey } = require("./vault");
 
-function hasEnvKeyForProvider(providerName) {
-  if (providerName === "openai") {
-    return Boolean(process.env.OPENAI_API_KEY);
-  }
-  if (providerName === "gemini") {
-    return Boolean(process.env.GEMINI_API_KEY);
-  }
-  return false;
-}
-
 function getProviderState() {
   return storeGet("providerConfig", {
     defaultProvider: "ollama",

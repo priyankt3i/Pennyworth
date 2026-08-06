@@ -100,6 +100,8 @@ async function switchSessionFlow(sessionId) {
     if (result.ok) {
       state.activeSessionId = sessionId;
       state.history = result.session.messages || [];
+      state.lastToolTrace = [];
+      renderToolTrace([]);
       
       clearChatDisplay();
       
@@ -143,6 +145,8 @@ async function createNewSessionFlow() {
     if (result.ok) {
       state.activeSessionId = result.sessionId;
       state.history = [];
+      state.lastToolTrace = [];
+      renderToolTrace([]);
       clearChatDisplay();
 
       const hasProvider = await checkActiveProviderStatus();
@@ -538,15 +542,5 @@ async function captureScreenFlow() {
     await openCaptureModalForCurrentDisplay();
   } catch (error) {
     reportFailure("Capture failed:", error, true);
-  }
-}
-
-async function stopAgent() {
-  setStatus("Stopping agent...");
-  try {
-    await window.pennyworth.cancelAgent();
-  } catch (err) {
-    console.error("Cancel agent error:", err);
-    setStatus("Failed to stop agent.", "error");
   }
 }

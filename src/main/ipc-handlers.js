@@ -4,15 +4,14 @@ const path = require("path");
 const crypto = require("crypto");
 const axios = require("axios");
 
-const { storeGet, storeSet, readStore, writeStore } = require("./store");
+const { storeGet, storeSet } = require("./store");
 const { getStoredApiKey, setStoredApiKey, clearStoredApiKey, getVaultStatus, setupVault, unlockVault } = require("./vault");
 const { getSessionFilePath, listSessions, loadSession, deleteSession } = require("./sessions");
-const { checkOllamaRunning, startOllamaService, bootstrapOllama, bootstrapSetDefaultProvider } = require("./bootstrap");
-const { getProviderState, saveProviderState, getProviderStateForUi, normalizeProviderState } = require("./provider-config");
+const { bootstrapOllama, bootstrapSetDefaultProvider } = require("./bootstrap");
+const { getProviderState, saveProviderState, getProviderStateForUi } = require("./provider-config");
 const { listOllamaModels, listOpenAIModels, listGeminiModels, invalidateProviderHealthCache, getProviderHealth } = require("./health");
 const { runtimeState, getAgentContextState } = require("./profiles");
 
-const { getSystemContext } = require("../core/system-context");
 const { retrieveContext } = require("../core/rag");
 const { askWithFailover, cancelCurrentSession } = require("../core/providers");
 

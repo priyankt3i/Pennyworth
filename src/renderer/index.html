@@ -75,7 +75,13 @@
 
         <section id="chat" class="chat"></section>
         <section id="tracePanel" class="trace-panel hidden">
-          <div class="trace-header">Tool Trace (Dev Mode)</div>
+          <div class="trace-header">
+            <span>Tool Trace (Dev Mode)</span>
+            <div class="trace-actions">
+              <button id="copyTraceBtn" type="button" class="trace-btn" title="Copy Tool Trace" aria-label="Copy Tool Trace">Copy</button>
+              <button id="clearTraceBtn" type="button" class="trace-btn" title="Clear Tool Trace" aria-label="Clear Tool Trace">Clear</button>
+            </div>
+          </div>
           <pre id="traceContent">No tool calls captured yet.</pre>
         </section>
 
@@ -178,6 +184,16 @@
 
             <label for="tokenSaverMode">Enable Token Saver Mode (Concise AI Responses)</label>
             <input id="tokenSaverMode" type="checkbox" />
+
+            <label for="maxToolSteps">Maximum Tool Loop Steps</label>
+            <input
+              id="maxToolSteps"
+              type="number"
+              min="1"
+              max="50"
+              placeholder="10"
+              title="Maximum number of tool execution steps allowed per query (1-50)"
+            />
 
             <label for="themeSelect">UI Theme</label>
             <select id="themeSelect">

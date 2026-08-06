@@ -558,3 +558,18 @@ test("OpenAI & Gemini Model Discovery & Masked API Key", async (t) => {
     assert.strictEqual(res.reply, "Hello from OpenAI API!");
   });
 });
+
+test("Token Saver Mode System Prompt Directive", async (t) => {
+  const { normalizeAgentContext } = require("../main/profiles");
+
+  await t.test("should correctly normalize maxToolSteps preference", () => {
+    const defaultVal = normalizeAgentContext({});
+    assert.strictEqual(defaultVal.maxToolSteps, 10);
+
+    const customVal = normalizeAgentContext({ maxToolSteps: 15 });
+    assert.strictEqual(customVal.maxToolSteps, 15);
+
+    const invalidVal = normalizeAgentContext({ maxToolSteps: 999 });
+    assert.strictEqual(invalidVal.maxToolSteps, 10);
+  });
+});

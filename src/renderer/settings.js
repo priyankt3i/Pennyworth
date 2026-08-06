@@ -437,6 +437,9 @@ function populateSettingsForm(settingsPayload) {
   if (el.tokenSaverMode) {
     el.tokenSaverMode.checked = Boolean(agentContext.tokenSaverMode);
   }
+  if (el.maxToolSteps) {
+    el.maxToolSteps.value = agentContext.maxToolSteps || 10;
+  }
   if (el.themeSelect) {
     el.themeSelect.value = agentContext.theme || "light";
   }
@@ -503,6 +506,7 @@ async function saveSettings() {
       allowIpLocation: el.allowIpLocation.checked,
       devMode: Boolean(el.devMode?.checked),
       tokenSaverMode: Boolean(el.tokenSaverMode?.checked),
+      maxToolSteps: parseInt(el.maxToolSteps?.value, 10) || 10,
       theme: el.themeSelect.value,
     },
     providerConfig: {

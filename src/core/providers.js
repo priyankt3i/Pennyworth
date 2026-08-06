@@ -10,6 +10,11 @@ const {
   runAgentTooling,
 } = require("./tools");
 
+function getAgentMaxSteps(context) {
+  const raw = parseInt(context?.agentContext?.maxToolSteps, 10);
+  return Number.isInteger(raw) && raw >= 1 && raw <= 50 ? raw : 10;
+}
+
 function buildSystemPrompt(context) {
   const { systemContext, distroProfile, retrievedDocs, memories = [], agentContext } = context;
   const memorySection = memories.length > 0
@@ -318,7 +323,8 @@ async function askOllama(config, context) {
   const messages = buildOllamaMessages(context);
   const tools = getOpenAIToolDefinitions(); // Ollama uses OpenAI-compatible tool specifications
 
-  for (let step = 0; step < 4; step += 1) {
+  const maxSteps = getAgentMaxSteps(context);
+  for (let step = 0; step < maxSteps; step += 1) {
     checkCancellation();
     const response = await axios.post(`${baseUrl}/api/chat`, {
       model,
@@ -416,7 +422,7 @@ async function askOllama(config, context) {
     return reply;
   }
 
-  throw new Error("Ollama tool-calling loop exceeded maximum steps.");
+  throw new Error(`Ollama tool-calling loop exceeded maximum steps (${maxSteps}).`);
 }
 
 async function askOpenAI(config, context) {
@@ -429,7 +435,8 @@ async function askOpenAI(config, context) {
   const messages = buildOpenAIMessages(context);
   const tools = getOpenAIToolDefinitions();
 
-  for (let step = 0; step < 4; step += 1) {
+  const maxSteps = getAgentMaxSteps(context);
+  for (let step = 0; step < maxSteps; step += 1) {
     checkCancellation();
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
@@ -491,7 +498,7 @@ async function askOpenAI(config, context) {
     return finalText;
   }
 
-  throw new Error("OpenAI tool-calling loop exceeded maximum steps.");
+  throw new Error(`OpenAI tool-calling loop exceeded maximum steps (${maxSteps}).`);
 }
 
 function extractGeminiText(candidate) {
@@ -523,7 +530,8 @@ async function askGemini(config, context) {
     parts: [{ text: buildSystemPrompt(context) }],
   };
 
-  for (let step = 0; step < 4; step += 1) {
+  const maxSteps = getAgentMaxSteps(context);
+  for (let step = 0; step < maxSteps; step += 1) {
     checkCancellation();
     const response = await axios.post(url, {
       systemInstruction,
@@ -577,7 +585,7 @@ async function askGemini(config, context) {
     return text;
   }
 
-  throw new Error("Gemini tool-calling loop exceeded maximum steps.");
+  throw new Error(`Gemini tool-calling loop exceeded maximum steps (${maxSteps}).`);
 }
 
 async function askProvider(providerName, providerConfig, context) {

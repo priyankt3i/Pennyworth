@@ -496,6 +496,24 @@ function registerIpcHandlers(getMainWindow) {
     return await bootstrapOllama();
   });
 
+  ipcMain.handle("pennyworth:show-native-notification", async (_event, payload) => {
+    try {
+      const { Notification } = require("electron");
+      if (Notification && Notification.isSupported()) {
+        const notification = new Notification({
+          title: payload?.title || "Pennyworth",
+          body: payload?.body || "",
+        });
+        notification.show();
+        return { ok: true };
+      }
+      return { ok: false, error: "Native notifications not supported" };
+    } catch (error) {
+      console.error("Failed to show native notification:", error);
+      return { ok: false, error: error.message };
+    }
+  });
+
   ipcMain.handle("pennyworth:bootstrap-pull-model", async (event, modelName) => {
     try {
       const response = await axios.post("http://127.0.0.1:11434/api/pull", {
@@ -507,10 +525,14 @@ function registerIpcHandlers(getMainWindow) {
       });
 
       const mainWindow = getMainWindow();
+      let buffer = "";
 
       response.data.on("data", (chunk) => {
-        const lines = chunk.toString().split("\n").filter(Boolean);
+        buffer += chunk.toString();
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
         for (const line of lines) {
+          if (!line.trim()) continue;
           try {
             const data = JSON.parse(line);
             if (mainWindow && !mainWindow.isDestroyed()) {
@@ -523,7 +545,17 @@ function registerIpcHandlers(getMainWindow) {
       });
 
       await new Promise((resolve, reject) => {
-        response.data.on("end", () => resolve());
+        response.data.on("end", () => {
+          if (buffer.trim()) {
+            try {
+              const data = JSON.parse(buffer);
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send("pennyworth:bootstrap-progress", data);
+              }
+            } catch (e) {}
+          }
+          resolve();
+        });
         response.data.on("error", (err) => reject(err));
       });
 

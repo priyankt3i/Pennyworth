@@ -61,10 +61,10 @@ function setOllamaModelOptions(models, preferredModel) {
 
   if (!uniqueModels.length) {
     const fallback = document.createElement("option");
-    fallback.value = safePreferred;
-    fallback.textContent = `${safePreferred} (configured)`;
+    fallback.value = "";
+    fallback.textContent = "No models available (please pull a model)";
     el.ollamaModel.appendChild(fallback);
-    el.ollamaModel.value = safePreferred;
+    el.ollamaModel.value = "";
     return;
   }
 
@@ -75,14 +75,11 @@ function setOllamaModelOptions(models, preferredModel) {
     el.ollamaModel.appendChild(option);
   });
 
-  if (!uniqueModels.includes(safePreferred)) {
-    const configured = document.createElement("option");
-    configured.value = safePreferred;
-    configured.textContent = `${safePreferred} (configured)`;
-    el.ollamaModel.appendChild(configured);
+  if (uniqueModels.includes(safePreferred)) {
+    el.ollamaModel.value = safePreferred;
+  } else {
+    el.ollamaModel.value = uniqueModels[0];
   }
-
-  el.ollamaModel.value = safePreferred;
 }
 
 async function refreshOllamaModels(showStatus = false) {

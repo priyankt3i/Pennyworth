@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("pennyworth", {
   bootstrapPullModel: (modelName) => ipcRenderer.invoke("pennyworth:bootstrap-pull-model", modelName),
   bootstrapSetDefaultProvider: (provider, model) => ipcRenderer.invoke("pennyworth:bootstrap-set-default-provider", provider, model),
   onBootstrapProgress: (handler) => ipcRenderer.on("pennyworth:bootstrap-progress", (event, arg) => handler(arg)),
+  showNativeNotification: (payload) => ipcRenderer.invoke("pennyworth:show-native-notification", payload),
   vaultStatus: () => ipcRenderer.invoke("pennyworth:vault-status"),
   vaultSetup: (passphrase) => ipcRenderer.invoke("pennyworth:vault-setup", passphrase),
   vaultUnlock: (passphrase) => ipcRenderer.invoke("pennyworth:vault-unlock", passphrase),

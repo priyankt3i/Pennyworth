@@ -11,13 +11,17 @@ const {
 } = require("./tools");
 
 function buildSystemPrompt(context) {
-  const { systemContext, distroProfile, retrievedDocs, memories = [] } = context;
+  const { systemContext, distroProfile, retrievedDocs, memories = [], agentContext } = context;
   const memorySection = memories.length > 0
     ? [
         "Butler Memory (Persistent facts you have learned/saved about this system/user):",
         ...memories.map((m) => `- [${new Date(m.at).toLocaleDateString()}] ${m.fact}`),
       ].join("\n")
     : "Butler Memory: No persistent facts recorded yet.";
+
+  const tokenSaverDirective = agentContext?.tokenSaverMode
+    ? "\n\nTOKEN SAVER MODE ACTIVE: Be extremely concise, direct, and token-efficient. Omit greetings, pleasantries, and filler words. Maintain 100% technical accuracy, full code blocks, and exact answers."
+    : "";
 
   return [
     "You are Hermes, the advanced agentic PC and Linux system handler inside Pennyworth.",
@@ -38,7 +42,7 @@ function buildSystemPrompt(context) {
     JSON.stringify(distroProfile, null, 2),
     "Retrieved local docs context:",
     JSON.stringify(retrievedDocs, null, 2),
-  ].join("\n\n");
+  ].join("\n\n") + tokenSaverDirective;
 }
 
 function parseImageDataUrl(dataUrl) {

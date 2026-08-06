@@ -60,6 +60,7 @@ const el = {
   docsRootOverride: document.getElementById("docsRootOverride"),
   allowIpLocation: document.getElementById("allowIpLocation"),
   devMode: document.getElementById("devMode"),
+  tokenSaverMode: document.getElementById("tokenSaverMode"),
   llmTabOllama: document.getElementById("llmTabOllama"),
   llmTabOpenAI: document.getElementById("llmTabOpenAI"),
   llmTabGemini: document.getElementById("llmTabGemini"),

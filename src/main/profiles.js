@@ -167,6 +167,7 @@ function normalizeAgentContext(input) {
     docsRootUrlOverride: String(input?.docsRootUrlOverride || "").trim(),
     allowIpLocation: Boolean(input?.allowIpLocation),
     devMode: Boolean(input?.devMode),
+    tokenSaverMode: Boolean(input?.tokenSaverMode),
     theme: String(input?.theme || "light"),
   };
 }

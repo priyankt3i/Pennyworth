@@ -128,6 +128,10 @@ if (process.env.NODE_ENV !== "test") {
 
   app.on("will-quit", () => {
     globalShortcut.unregisterAll();
+    try {
+      const { terminateWorker } = require("./local-whisper");
+      terminateWorker();
+    } catch (e) {}
   });
 
   app.on("window-all-closed", () => {

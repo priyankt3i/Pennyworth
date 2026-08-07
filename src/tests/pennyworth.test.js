@@ -583,3 +583,27 @@ test("Token Saver Mode System Prompt Directive", async (t) => {
     assert.strictEqual(invalidVal.maxToolSteps, 10);
   });
 });
+
+test("Audio Transcription IPC Handler", async (t) => {
+  await t.test("should return clear key guidance when OpenAI key is missing", async () => {
+    const { getStoredApiKey } = require("../main/vault");
+    const storedKey = await getStoredApiKey("openai");
+    if (!storedKey && !process.env.OPENAI_API_KEY) {
+      const payload = { audioBuffer: Buffer.from("fake audio data").buffer };
+      const { ipcMain } = require("electron");
+      const handler = ipcMain._events?.["pennyworth:transcribe-audio"];
+      if (handler) {
+        const res = await handler(null, payload);
+        assert.strictEqual(res.ok, false);
+        assert.match(res.error, /API key/i);
+      }
+    }
+  });
+
+  await t.test("should gracefully manage local whisper worker lifecycle", () => {
+    const { terminateWorker } = require("../main/local-whisper");
+    assert.doesNotThrow(() => {
+      terminateWorker();
+    });
+  });
+});

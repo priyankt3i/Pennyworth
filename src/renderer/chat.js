@@ -540,35 +540,181 @@ async function askAgent() {
   }
 }
 
-function startVoiceInput() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
+let voiceState = {
+  active: false,
+  stream: null,
+  audioCtx: null,
+  processor: null,
+  baseText: "",
+  committedText: "",
+  lastPartialText: "",
+  isListenerSet: false,
+};
+
+function downsampleBuffer(buffer, inputSampleRate, targetSampleRate = 16000) {
+  if (inputSampleRate === targetSampleRate) return buffer;
+  const ratio = inputSampleRate / targetSampleRate;
+  const newLength = Math.floor(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    const originPos = i * ratio;
+    const index = Math.floor(originPos);
+    const decimal = originPos - index;
+    const nextIndex = Math.min(index + 1, buffer.length - 1);
+    result[i] = buffer[index] * (1 - decimal) + buffer[nextIndex] * decimal;
+  }
+  return result;
+}
+
+function initLiveTranscriptListener() {
+  if (voiceState.isListenerSet || !window.pennyworth?.onLiveTranscriptPartial) return;
+  voiceState.isListenerSet = true;
+
+  window.pennyworth.onLiveTranscriptPartial((data) => {
+    if (data?.text) {
+      const liveText = data.text.trim();
+      if (liveText) {
+        if (data.isFinal) {
+          if (voiceState.lastPartialText && !voiceState.committedText.endsWith(voiceState.lastPartialText)) {
+            voiceState.committedText = voiceState.committedText
+              ? `${voiceState.committedText} ${voiceState.lastPartialText}`
+              : voiceState.lastPartialText;
+          } else if (!voiceState.lastPartialText && !voiceState.committedText.endsWith(liveText)) {
+            voiceState.committedText = voiceState.committedText
+              ? `${voiceState.committedText} ${liveText}`
+              : liveText;
+          }
+          voiceState.lastPartialText = "";
+        } else {
+          // Detect new sentence segment after a pause and commit previous segment
+          if (
+            voiceState.lastPartialText &&
+            !liveText.toLowerCase().startsWith(voiceState.lastPartialText.toLowerCase()) &&
+            !voiceState.committedText.endsWith(voiceState.lastPartialText)
+          ) {
+            voiceState.committedText = voiceState.committedText
+              ? `${voiceState.committedText} ${voiceState.lastPartialText}`
+              : voiceState.lastPartialText;
+          }
+          voiceState.lastPartialText = liveText;
+        }
+
+        if (el.promptInput) {
+          const currentLive = data.isFinal ? "" : voiceState.lastPartialText;
+          const combined = [voiceState.baseText, voiceState.committedText, currentLive]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+
+          el.promptInput.value = combined;
+          el.promptInput.focus();
+          el.promptInput.selectionStart = el.promptInput.value.length;
+          el.promptInput.selectionEnd = el.promptInput.value.length;
+        }
+        setStatus(data.isFinal ? "Voice captured." : "Transcribing voice...", "ok");
+      }
+    }
+  });
+}
+
+async function startVoiceInput() {
+  if (voiceState.active) {
+    stopVoiceInput();
+    return;
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
     setStatus("Speech recognition is not available in this environment.", "error");
     return;
   }
 
-  const recog = new SpeechRecognition();
-  recog.lang = "en-US";
-  recog.interimResults = false;
-  recog.maxAlternatives = 1;
+  try {
+    initLiveTranscriptListener();
 
-  setStatus("Listening...");
-  recog.start();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    voiceState.stream = stream;
+    voiceState.baseText = el.promptInput?.value ? el.promptInput.value.trim() : "";
+    voiceState.committedText = "";
+    voiceState.lastPartialText = "";
+    voiceState.active = true;
 
-  recog.onresult = (event) => {
-    const transcript = event.results?.[0]?.[0]?.transcript || "";
-    if (!transcript) {
-      setStatus("No speech detected.", "error");
-      return;
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    voiceState.audioCtx = audioCtx;
+
+    if (audioCtx.state === "suspended") {
+      await audioCtx.resume();
     }
 
-    el.promptInput.value = `${el.promptInput.value} ${transcript}`.trim();
-    setStatus("Voice captured.", "ok");
-  };
+    const source = audioCtx.createMediaStreamSource(stream);
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    voiceState.processor = processor;
 
-  recog.onerror = (event) => {
-    setStatus(`Speech error: ${event.error}`, "error");
-  };
+    const muteGain = audioCtx.createGain();
+    muteGain.gain.value = 0;
+
+    processor.onaudioprocess = (e) => {
+      if (!voiceState.active) return;
+      const inputData = e.inputBuffer.getChannelData(0);
+      const resampled = downsampleBuffer(inputData, audioCtx.sampleRate, 16000);
+      const pcmSamples = Array.from(resampled);
+      if (window.pennyworth?.sendAudioStreamChunk) {
+        window.pennyworth.sendAudioStreamChunk({ pcmSamples });
+      }
+    };
+
+    source.connect(processor);
+    processor.connect(muteGain);
+    muteGain.connect(audioCtx.destination);
+
+    if (el.voiceBtn) {
+      el.voiceBtn.classList.add("recording");
+      el.voiceBtn.textContent = "Stop (Mic)";
+    }
+    setStatus("Listening...", "ok");
+  } catch (err) {
+    setStatus("Microphone access denied or unavailable.", "error");
+    stopVoiceInput();
+  }
+}
+
+function stopVoiceInput() {
+  voiceState.active = false;
+
+  if (window.pennyworth?.stopAudioStream) {
+    window.pennyworth.stopAudioStream();
+  }
+
+  if (voiceState.processor) {
+    try {
+      voiceState.processor.disconnect();
+    } catch (e) {}
+    voiceState.processor = null;
+  }
+
+  if (voiceState.audioCtx && voiceState.audioCtx.state !== "closed") {
+    try {
+      voiceState.audioCtx.close().catch(() => {});
+    } catch (e) {}
+    voiceState.audioCtx = null;
+  }
+
+  if (voiceState.stream) {
+    try {
+      voiceState.stream.getTracks().forEach((track) => track.stop());
+    } catch (e) {}
+    voiceState.stream = null;
+  }
+
+  if (el.voiceBtn) {
+    el.voiceBtn.classList.remove("recording");
+    el.voiceBtn.textContent = "Voice";
+  }
+
+  if (el.promptInput) {
+    el.promptInput.focus();
+  }
+
+  setStatus("Voice input disabled.", "ok");
 }
 
 async function captureScreenFlow() {

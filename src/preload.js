@@ -31,4 +31,8 @@ contextBridge.exposeInMainWorld("pennyworth", {
   vaultStatus: () => ipcRenderer.invoke("pennyworth:vault-status"),
   vaultSetup: (passphrase) => ipcRenderer.invoke("pennyworth:vault-setup", passphrase),
   vaultUnlock: (passphrase) => ipcRenderer.invoke("pennyworth:vault-unlock", passphrase),
+  transcribeAudio: (payload) => ipcRenderer.invoke("pennyworth:transcribe-audio", payload),
+  sendAudioStreamChunk: (payload) => ipcRenderer.send("pennyworth:audio-stream-chunk", payload),
+  stopAudioStream: () => ipcRenderer.send("pennyworth:audio-stream-stop"),
+  onLiveTranscriptPartial: (handler) => ipcRenderer.on("pennyworth:live-transcript-partial", (_event, arg) => handler(arg)),
 });

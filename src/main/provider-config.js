@@ -4,6 +4,7 @@ const { getStoredApiKey } = require("./vault");
 function getProviderState() {
   return storeGet("providerConfig", {
     defaultProvider: "ollama",
+    transcriptionProvider: "local",
     customCaCertPath: "",
     providers: {
       ollama: { enabled: true, baseUrl: "http://127.0.0.1:11434", model: "llama3.2" },
@@ -16,6 +17,7 @@ function getProviderState() {
 function normalizeProviderState(base, override) {
   const merged = {
     defaultProvider: override?.defaultProvider || base?.defaultProvider || "ollama",
+    transcriptionProvider: override?.transcriptionProvider || base?.transcriptionProvider || "local",
     customCaCertPath: override?.customCaCertPath || base?.customCaCertPath || "",
     providers: {
       ollama: {
@@ -87,6 +89,7 @@ async function getProviderStateForUi() {
   return {
     secureStorageAvailable: require("electron").safeStorage.isEncryptionAvailable(),
     defaultProvider: providerState.defaultProvider,
+    transcriptionProvider: providerState.transcriptionProvider || "local",
     customCaCertPath: providerState.customCaCertPath,
     providers: {
       ollama: {

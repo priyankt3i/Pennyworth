@@ -200,6 +200,15 @@
               <option value="light">Light (Default)</option>
               <option value="dark">Dark</option>
             </select>
+
+            <label for="transcriptionProviderSelect">Speech-to-Text / Voice Provider</label>
+            <select id="transcriptionProviderSelect">
+              <option value="local">Local Whisper (Offline CPU - Default)</option>
+              <option value="openai">OpenAI Whisper (Cloud API)</option>
+              <option value="gemini">Gemini Audio (Cloud API)</option>
+              <option value="groq">Groq Whisper (Cloud API)</option>
+              <option value="auto">Auto (Local Whisper with Cloud Failover)</option>
+            </select>
           </div>
         </section>
 

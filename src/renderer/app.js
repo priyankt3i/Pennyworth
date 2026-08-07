@@ -733,8 +733,11 @@ async function init() {
     setStatus("Stopping agent...");
     try {
       await window.pennyworth.cancelAgent();
+      if (typeof setBusy === "function") setBusy(false);
+      setStatus("Agent stopped.", "warn");
     } catch (err) {
       console.error("Cancel agent error:", err);
+      if (typeof setBusy === "function") setBusy(false);
       setStatus("Failed to stop agent.", "error");
     }
   }

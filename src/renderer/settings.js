@@ -443,6 +443,9 @@ function populateSettingsForm(settingsPayload) {
   if (el.customCaCertPath) {
     el.customCaCertPath.value = providerConfig.customCaCertPath || "";
   }
+  if (el.transcriptionProviderSelect) {
+    el.transcriptionProviderSelect.value = providerConfig.transcriptionProvider || "local";
+  }
   refreshVaultStatus();
   updateTracePanelVisibility();
 
@@ -508,6 +511,7 @@ async function saveSettings() {
     },
     providerConfig: {
       defaultProvider: activeProvider,
+      transcriptionProvider: el.transcriptionProviderSelect?.value || "local",
       customCaCertPath: el.customCaCertPath.value.trim(),
       providers: {
         ollama: {

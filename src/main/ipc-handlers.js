@@ -20,6 +20,24 @@ let liveStreamPcmBuffer = new Float32Array(0);
 let isTranscribingStream = false;
 let lastTranscribedText = "";
 
+function sendTraceToRenderer(traceData, sender = null) {
+  try {
+    const { BrowserWindow } = require("electron");
+    const traceEvent = {
+      at: new Date().toISOString(),
+      ...traceData,
+    };
+    if (sender && !sender.isDestroyed()) {
+      sender.send("pennyworth:trace-event", traceEvent);
+      return;
+    }
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("pennyworth:trace-event", traceEvent);
+    }
+  } catch (e) {}
+}
+
 ipcMain.on("pennyworth:audio-stream-chunk", async (event, payload) => {
   try {
     const { pcmSamples } = payload || {};
@@ -72,6 +90,11 @@ ipcMain.on("pennyworth:audio-stream-chunk", async (event, payload) => {
             lastTranscribedText = res.text;
             if (event.sender && !event.sender.isDestroyed()) {
               event.sender.send("pennyworth:live-transcript-partial", { text: res.text });
+              sendTraceToRenderer({
+                stage: "transcription_live_partial",
+                provider: "Local Whisper (Offline CPU)",
+                text: res.text,
+              }, event.sender);
             }
           }
         })
@@ -89,11 +112,19 @@ ipcMain.on("pennyworth:audio-stream-chunk", async (event, payload) => {
 
 ipcMain.on("pennyworth:audio-stream-stop", async (event) => {
   try {
+    const providerState = getProviderState();
+    const selectedProvider = providerState?.transcriptionProvider || "local";
+
     if (liveStreamPcmBuffer.length > 0) {
       const snapshot = new Float32Array(liveStreamPcmBuffer);
       const res = await transcribeLocalPcm(snapshot);
       if (res.ok && res.text && event.sender && !event.sender.isDestroyed()) {
         event.sender.send("pennyworth:live-transcript-partial", { text: res.text, isFinal: true });
+        sendTraceToRenderer({
+          stage: "transcription_final",
+          provider: selectedProvider === "local" ? "Local Whisper (Offline CPU)" : selectedProvider,
+          text: res.text,
+        }, event.sender);
       }
     }
   } catch (err) {
@@ -222,135 +253,187 @@ function registerIpcHandlers(getMainWindow) {
     }
   });
 
+function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
+  let float32Array;
+  if (pcmSamples instanceof Float32Array) {
+    float32Array = pcmSamples;
+  } else if (Array.isArray(pcmSamples)) {
+    float32Array = new Float32Array(pcmSamples);
+  } else if (Buffer.isBuffer(pcmSamples) || pcmSamples instanceof Uint8Array) {
+    const ab = pcmSamples.buffer.slice(pcmSamples.byteOffset, pcmSamples.byteOffset + pcmSamples.byteLength);
+    float32Array = new Float32Array(ab);
+  } else if (pcmSamples && typeof pcmSamples === "object") {
+    float32Array = Float32Array.from(Object.values(pcmSamples));
+  } else {
+    float32Array = new Float32Array(0);
+  }
+
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  const blockAlign = numChannels * (bitsPerSample / 8);
+  const dataSize = float32Array.length * (bitsPerSample / 8);
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  function writeString(offset, string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeString(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < float32Array.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, float32Array[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+
+  return Buffer.from(buffer);
+}
+
   ipcMain.handle("pennyworth:transcribe-audio", async (_event, payload) => {
     try {
+      const providerState = getProviderState();
+      const selectedProvider = payload?.provider || providerState?.transcriptionProvider || "local";
       const { audioBuffer, mimeType = "audio/webm", pcmSamples } = payload || {};
 
-      // 1. Local Whisper via Float32 PCM samples (CPU ONNX)
-      if (pcmSamples && Array.isArray(pcmSamples) && pcmSamples.length > 0) {
-        try {
-          const floatArray = Float32Array.from(pcmSamples);
-          const localRes = await transcribeLocalPcm(floatArray);
+      let buffer = audioBuffer ? Buffer.from(audioBuffer) : null;
+      let effectiveMime = mimeType;
+
+      if (!buffer && pcmSamples) {
+        buffer = pcmToWavBuffer(pcmSamples);
+        effectiveMime = "audio/wav";
+      }
+
+      // 1. Explicit Local Whisper
+      if (selectedProvider === "local") {
+        if (pcmSamples) {
+          const localRes = await transcribeLocalPcm(pcmSamples);
           if (localRes.ok && localRes.text) {
             return { ok: true, text: localRes.text, provider: "Local Whisper (Offline CPU)" };
           }
-        } catch (err) {
-          console.warn("Local PCM Whisper failed:", err.message);
+          return { ok: false, error: localRes.error || "Local Whisper transcription failed." };
         }
       }
-
-      const buffer = audioBuffer ? Buffer.from(audioBuffer) : null;
 
       // 2. OpenAI Whisper
-      const openaiStoredKey = await getStoredApiKey("openai");
-      const openaiKey = openaiStoredKey || process.env.OPENAI_API_KEY || "";
-      if (openaiKey && buffer) {
-        try {
-          const blob = new Blob([buffer], { type: mimeType });
-          const formData = new FormData();
-          formData.append("file", blob, "speech.webm");
-          formData.append("model", "whisper-1");
+      if (selectedProvider === "openai" || (selectedProvider === "auto" && !pcmSamples)) {
+        const openaiStoredKey = await getStoredApiKey("openai");
+        const openaiKey = openaiStoredKey || process.env.OPENAI_API_KEY || "";
+        if (!openaiKey && selectedProvider === "openai") {
+          return { ok: false, error: "OpenAI API key is missing. Configure OpenAI key in settings." };
+        }
+        if (openaiKey && buffer) {
+          try {
+            const blob = new Blob([buffer], { type: effectiveMime });
+            const formData = new FormData();
+            formData.append("file", blob, effectiveMime.includes("wav") ? "speech.wav" : "speech.webm");
+            formData.append("model", "whisper-1");
 
-          const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${openaiKey}` },
-            body: formData,
-          });
+            const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${openaiKey}` },
+              body: formData,
+            });
 
-          if (response.ok) {
-            const data = await response.json();
-            if (data.text) return { ok: true, text: data.text, provider: "OpenAI Whisper" };
+            if (response.ok) {
+              const data = await response.json();
+              if (data.text) return { ok: true, text: data.text, provider: "OpenAI Whisper" };
+            }
+          } catch (err) {
+            console.warn("OpenAI Whisper transcription failed:", err.message);
           }
-        } catch (err) {
-          console.warn("OpenAI Whisper transcription failed:", err.message);
         }
       }
 
-      // 3. Groq Whisper
-      const groqKey = process.env.GROQ_API_KEY || "";
-      if (groqKey && buffer) {
-        try {
-          const blob = new Blob([buffer], { type: mimeType });
-          const formData = new FormData();
-          formData.append("file", blob, "speech.webm");
-          formData.append("model", "whisper-large-v3-turbo");
+      // 3. Gemini Audio Transcription
+      if (selectedProvider === "gemini") {
+        const geminiStoredKey = await getStoredApiKey("gemini");
+        const geminiKey = geminiStoredKey || process.env.GEMINI_API_KEY || "";
+        if (!geminiKey) {
+          return { ok: false, error: "Gemini API key is missing. Configure Gemini key in settings." };
+        }
+        if (buffer) {
+          try {
+            const base64Audio = buffer.toString("base64");
+            const cleanMime = (effectiveMime || "audio/wav").split(";")[0];
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+            const response = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [
+                  {
+                    parts: [
+                      { inlineData: { mimeType: cleanMime, data: base64Audio } },
+                      { text: "Transcribe this spoken audio recording verbatim. Return only the transcript text without formatting, explanations, or quotes." }
+                    ]
+                  }
+                ]
+              })
+            });
 
-          const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${groqKey}` },
-            body: formData,
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            if (data.text) return { ok: true, text: data.text, provider: "Groq Whisper" };
+            if (response.ok) {
+              const data = await response.json();
+              const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+              if (text) return { ok: true, text, provider: "Gemini Audio" };
+            }
+          } catch (err) {
+            console.warn("Gemini audio transcription failed:", err.message);
           }
-        } catch (err) {
-          console.warn("Groq Whisper transcription failed:", err.message);
         }
       }
 
-      // 4. Gemini Audio Transcription
-      const geminiStoredKey = await getStoredApiKey("gemini");
-      const geminiKey = geminiStoredKey || process.env.GEMINI_API_KEY || "";
-      if (geminiKey && buffer) {
-        try {
-          const base64Audio = buffer.toString("base64");
-          const cleanMime = (mimeType || "audio/webm").split(";")[0];
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
-          const response = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
-                    { inlineData: { mimeType: cleanMime, data: base64Audio } },
-                    { text: "Transcribe this spoken audio recording verbatim. Return only the transcript text without formatting, explanations, or quotes." }
-                  ]
-                }
-              ]
-            })
-          });
+      // 4. Groq Whisper
+      if (selectedProvider === "groq") {
+        const groqKey = process.env.GROQ_API_KEY || "";
+        if (!groqKey) return { ok: false, error: "Groq API key environment variable is missing." };
+        if (buffer) {
+          try {
+            const blob = new Blob([buffer], { type: effectiveMime });
+            const formData = new FormData();
+            formData.append("file", blob, effectiveMime.includes("wav") ? "speech.wav" : "speech.webm");
+            formData.append("model", "whisper-large-v3-turbo");
 
-          if (response.ok) {
-            const data = await response.json();
-            const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-            if (text) return { ok: true, text, provider: "Gemini Audio" };
+            const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${groqKey}` },
+              body: formData,
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              if (data.text) return { ok: true, text: data.text, provider: "Groq Whisper" };
+            }
+          } catch (err) {
+            console.warn("Groq Whisper transcription failed:", err.message);
           }
-        } catch (err) {
-          console.warn("Gemini audio transcription failed:", err.message);
         }
       }
 
-      // 5. Local / Custom Whisper Endpoint
-      const whisperUrl = process.env.WHISPER_BASE_URL || "";
-      if (whisperUrl && buffer) {
-        try {
-          const blob = new Blob([buffer], { type: mimeType });
-          const formData = new FormData();
-          formData.append("file", blob, "speech.webm");
-          formData.append("model", "whisper-1");
-
-          const endpoint = `${whisperUrl.replace(/\/+$/, "")}/v1/audio/transcriptions`;
-          const response = await fetch(endpoint, {
-            method: "POST",
-            body: formData,
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            if (data.text) return { ok: true, text: data.text, provider: "Local Whisper Endpoint" };
-          }
-        } catch (err) {
-          console.warn("Local Whisper transcription failed:", err.message);
+      // 5. Fallback for Auto / Local
+      if (pcmSamples) {
+        const localRes = await transcribeLocalPcm(pcmSamples);
+        if (localRes.ok && localRes.text) {
+          return { ok: true, text: localRes.text, provider: "Local Whisper (Offline CPU)" };
         }
       }
 
-      return {
-        ok: false,
-        error: "Speech-to-text requires audio recording. Ensure microphone access is allowed.",
-      };
+      return { ok: false, error: "Failed to transcribe audio with the selected provider." };
     } catch (error) {
       return { ok: false, error: error.message || "Failed to transcribe audio." };
     }

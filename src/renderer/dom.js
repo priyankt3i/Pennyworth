@@ -102,4 +102,5 @@ const el = {
   vaultUnlockArea: document.getElementById("vaultUnlockArea"),
   vaultUnlockPassphrase: document.getElementById("vaultUnlockPassphrase"),
   vaultUnlockBtn: document.getElementById("vaultUnlockBtn"),
+  transcriptionProviderSelect: document.getElementById("transcriptionProviderSelect"),
 };

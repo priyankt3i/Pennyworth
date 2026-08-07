@@ -510,6 +510,10 @@ async function askAgent() {
     if (!result.ok) {
       let providerHintShown = false;
       const details = extractErrorText(result.error, "");
+      if (details.includes("AGENT_STOPPED") || details.includes("Execution terminated by user")) {
+        setStatus("Agent stopped.", "warn");
+        return;
+      }
       if (/(no enabled providers|api key is missing|connection failed|not connected|refused)/i.test(details)) {
         showNoProviderGuidance(true);
         providerHintShown = true;

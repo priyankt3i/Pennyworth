@@ -199,9 +199,15 @@ function compactValue(value, max = 700) {
 }
 
 let currentSessionCancelled = false;
+let currentAbortController = null;
 
 function cancelCurrentSession() {
   currentSessionCancelled = true;
+  if (currentAbortController) {
+    try {
+      currentAbortController.abort();
+    } catch (e) {}
+  }
 }
 
 function checkCancellation() {
@@ -336,6 +342,7 @@ async function askOllama(config, context) {
       },
     }, {
       httpsAgent: context.httpsAgent,
+      signal: context.signal,
     });
 
     const message = response?.data?.message;
@@ -406,6 +413,7 @@ async function askOllama(config, context) {
         stream: false,
       }, {
         httpsAgent: context.httpsAgent,
+        signal: context.signal,
       });
 
       const upgradedReply = synthesis?.data?.message?.content?.trim();
@@ -453,6 +461,7 @@ async function askOpenAI(config, context) {
         },
         timeout: 30000,
         httpsAgent: context.httpsAgent,
+        signal: context.signal,
       }
     );
 
@@ -542,6 +551,7 @@ async function askGemini(config, context) {
       },
     }, {
       httpsAgent: context.httpsAgent,
+      signal: context.signal,
     });
 
     const candidate = response?.data?.candidates?.[0];
@@ -622,6 +632,9 @@ function formatProviderError(error) {
 
 async function askWithFailover(providerState, context) {
   currentSessionCancelled = false;
+  currentAbortController = new AbortController();
+  const signal = currentAbortController.signal;
+
   const { defaultProvider, providers, customCaCertPath } = providerState;
   const order = [defaultProvider, ...Object.keys(providers).filter((k) => k !== defaultProvider)];
 
@@ -639,6 +652,7 @@ async function askWithFailover(providerState, context) {
     ...context,
     toolTrace: [],
     httpsAgent,
+    signal,
   };
 
   let lastError = null;
@@ -654,6 +668,7 @@ async function askWithFailover(providerState, context) {
     });
 
     try {
+      checkCancellation();
       const reply = await askProvider(providerName, providerConfig, traceContext);
       pushTrace(traceContext, {
         stage: "provider_success",
@@ -661,6 +676,17 @@ async function askWithFailover(providerState, context) {
       });
       return { provider: providerName, reply, toolTrace: traceContext.toolTrace };
     } catch (error) {
+      if (
+        currentSessionCancelled ||
+        error?.code === "ERR_CANCELED" ||
+        error?.code === "AGENT_STOPPED" ||
+        (error?.message && error.message.includes("AGENT_STOPPED"))
+      ) {
+        const stoppedErr = new Error("AGENT_STOPPED: Execution terminated by user.");
+        stoppedErr.code = "AGENT_STOPPED";
+        throw stoppedErr;
+      }
+
       const formattedError = formatProviderError(error);
       lastError = new Error(formattedError);
       pushTrace(traceContext, {

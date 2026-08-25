@@ -1,6 +1,9 @@
 const { parentPort } = require("worker_threads");
 const os = require("os");
 
+// Suppress C++ ONNX Runtime graph optimization warnings (log level 3 = ERROR / FATAL only)
+process.env.ORT_LOGGING_LEVEL = "3";
+
 let transcriberPipeline = null;
 let isBusy = false;
 

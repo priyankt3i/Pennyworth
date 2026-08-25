@@ -222,35 +222,49 @@ function escapeHtml(input) {
   return String(input || "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function renderMarkdown(input) {
-  let text = escapeHtml(input);
-  const blocks = [];
+  if (!input) return "";
 
-  text = text.replace(/```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g, (_m, lang, code) => {
-    const idx = blocks.length;
-    const language = lang ? ` class="lang-${lang}"` : "";
-    blocks.push(`<pre><code${language}>${code}</code></pre>`);
-    return `@@CODEBLOCK_${idx}@@`;
+  // 1. Extract and preserve code blocks securely using unique random placeholders
+  const codeBlocks = [];
+  const tokenPrefix = `__PW_CODE_BLOCK_${Math.random().toString(36).slice(2)}_${Date.now()}_`;
+  
+  let processed = String(input).replace(/```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g, (_m, lang, code) => {
+    const idx = codeBlocks.length;
+    const safeCode = escapeHtml(code);
+    const safeLang = lang ? escapeHtml(lang) : "";
+    const languageAttr = safeLang ? ` class="lang-${safeLang}"` : "";
+    codeBlocks.push(`<pre><code${languageAttr}>${safeCode}</code></pre>`);
+    return `${tokenPrefix}${idx}__`;
   });
 
-  text = text.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-  text = text.replace(/\*\*([^*][\s\S]*?)\*\*/g, "<strong>$1</strong>");
-  text = text.replace(/(^|\s)\*([^*\n][\s\S]*?)\*(?=\s|$)/g, "$1<em>$2</em>");
-  text = text.replace(/^###\s+(.+)$/gm, "<h4>$1</h4>");
-  text = text.replace(/^##\s+(.+)$/gm, "<h3>$1</h3>");
-  text = text.replace(/^#\s+(.+)$/gm, "<h2>$1</h2>");
-  text = text.replace(/^\s*-\s+(.+)$/gm, "- $1");
-  text = text.replace(/\n/g, "<br>");
+  // 2. Escape remaining raw text to prevent any HTML injection
+  processed = escapeHtml(processed);
 
-  blocks.forEach((html, idx) => {
-    text = text.replace(`@@CODEBLOCK_${idx}@@`, html);
+  // 3. Process inline markdown formatting safely on escaped text
+  processed = processed.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  processed = processed.replace(/\*\*([^*][\s\S]*?)\*\*/g, "<strong>$1</strong>");
+  processed = processed.replace(/(^|\s)\*([^*\n][\s\S]*?)\*(?=\s|$)/g, "$1<em>$2</em>");
+  processed = processed.replace(/^###\s+(.+)$/gm, "<h4>$1</h4>");
+  processed = processed.replace(/^##\s+(.+)$/gm, "<h3>$1</h3>");
+  processed = processed.replace(/^#\s+(.+)$/gm, "<h2>$1</h2>");
+  processed = processed.replace(/^\s*-\s+(.+)$/gm, "- $1");
+  processed = processed.replace(/\n/g, "<br>");
+
+  // 4. Re-insert preserved safe code blocks
+  codeBlocks.forEach((htmlBlock, idx) => {
+    const placeholder = escapeHtml(`${tokenPrefix}${idx}__`);
+    processed = processed.replace(placeholder, htmlBlock);
   });
 
-  return text;
+  return processed;
 }
+
 
 function extractErrorText(errorLike, fallback = "Unexpected failure.") {
   if (!errorLike) {
@@ -579,15 +593,8 @@ function initLiveTranscriptListener() {
       const liveText = data.text.trim();
       if (liveText) {
         if (data.isFinal) {
-          if (voiceState.lastPartialText && !voiceState.committedText.endsWith(voiceState.lastPartialText)) {
-            voiceState.committedText = voiceState.committedText
-              ? `${voiceState.committedText} ${voiceState.lastPartialText}`
-              : voiceState.lastPartialText;
-          } else if (!voiceState.lastPartialText && !voiceState.committedText.endsWith(liveText)) {
-            voiceState.committedText = voiceState.committedText
-              ? `${voiceState.committedText} ${liveText}`
-              : liveText;
-          }
+          // Final transcript cleanly replaces live stream partials
+          voiceState.committedText = liveText;
           voiceState.lastPartialText = "";
         } else {
           // Detect new sentence segment after a pause and commit previous segment
@@ -605,7 +612,8 @@ function initLiveTranscriptListener() {
 
         if (el.promptInput) {
           const currentLive = data.isFinal ? "" : voiceState.lastPartialText;
-          const combined = [voiceState.baseText, voiceState.committedText, currentLive]
+          const textToRender = data.isFinal ? liveText : voiceState.committedText;
+          const combined = [voiceState.baseText, textToRender, currentLive]
             .filter(Boolean)
             .join(" ")
             .trim();

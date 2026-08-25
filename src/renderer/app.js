@@ -82,6 +82,9 @@ function renderToolTrace(toolTrace, providerLabel = "") {
     if (entry?.text) {
       details.push(`text=${entry.text}`);
     }
+    if (entry?.details) {
+      details.push(`details=${entry.details}`);
+    }
 
     return [`#${idx + 1} ${timeText}`, `${provider}/${stage}`, ...details].join(" | ");
   });
@@ -732,7 +735,7 @@ async function init() {
   async function stopAgent() {
     setStatus("Stopping agent...");
     try {
-      await window.pennyworth.cancelAgent();
+      await window.pennyworth.cancelAgent(state.activeSessionId);
       if (typeof setBusy === "function") setBusy(false);
       setStatus("Agent stopped.", "warn");
     } catch (err) {

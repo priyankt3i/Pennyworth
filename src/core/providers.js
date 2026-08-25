@@ -198,25 +198,46 @@ function compactValue(value, max = 700) {
   return `${raw.slice(0, max)} ...`;
 }
 
-let currentSessionCancelled = false;
-let currentAbortController = null;
+const activeSessions = new Map();
+let globalCancelled = false;
 
-function cancelCurrentSession() {
-  currentSessionCancelled = true;
-  if (currentAbortController) {
-    try {
-      currentAbortController.abort();
-    } catch (e) {}
+function cancelCurrentSession(sessionId) {
+  globalCancelled = true;
+  if (sessionId && activeSessions.has(sessionId)) {
+    const session = activeSessions.get(sessionId);
+    session.cancelled = true;
+    if (session.controller) {
+      try {
+        session.controller.abort();
+      } catch (e) {}
+    }
+  } else {
+    for (const session of activeSessions.values()) {
+      session.cancelled = true;
+      if (session.controller) {
+        try {
+          session.controller.abort();
+        } catch (e) {}
+      }
+    }
   }
 }
 
-function checkCancellation() {
-  if (currentSessionCancelled) {
+function checkCancellation(signal = null, sessionState = null) {
+  if (signal?.aborted || sessionState?.cancelled || globalCancelled) {
     const err = new Error("AGENT_STOPPED: Execution terminated by user.");
     err.code = "AGENT_STOPPED";
     throw err;
   }
+  for (const session of activeSessions.values()) {
+    if (session.cancelled) {
+      const err = new Error("AGENT_STOPPED: Execution terminated by user.");
+      err.code = "AGENT_STOPPED";
+      throw err;
+    }
+  }
 }
+
 
 function pushTrace(context, event) {
   if (!Array.isArray(context?.toolTrace)) {
@@ -331,7 +352,7 @@ async function askOllama(config, context) {
 
   const maxSteps = getAgentMaxSteps(context);
   for (let step = 0; step < maxSteps; step += 1) {
-    checkCancellation();
+    checkCancellation(context.signal, context.sessionState);
     const response = await axios.post(`${baseUrl}/api/chat`, {
       model,
       messages,
@@ -445,7 +466,7 @@ async function askOpenAI(config, context) {
 
   const maxSteps = getAgentMaxSteps(context);
   for (let step = 0; step < maxSteps; step += 1) {
-    checkCancellation();
+    checkCancellation(context.signal, context.sessionState);
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
@@ -541,7 +562,7 @@ async function askGemini(config, context) {
 
   const maxSteps = getAgentMaxSteps(context);
   for (let step = 0; step < maxSteps; step += 1) {
-    checkCancellation();
+    checkCancellation(context.signal, context.sessionState);
     const response = await axios.post(url, {
       systemInstruction,
       contents,
@@ -631,9 +652,12 @@ function formatProviderError(error) {
 }
 
 async function askWithFailover(providerState, context) {
-  currentSessionCancelled = false;
-  currentAbortController = new AbortController();
-  const signal = currentAbortController.signal;
+  globalCancelled = false;
+  const sessionId = context.sessionId || "default";
+  const controller = new AbortController();
+  const sessionState = { controller, cancelled: false };
+  activeSessions.set(sessionId, sessionState);
+  const signal = controller.signal;
 
   const { defaultProvider, providers, customCaCertPath } = providerState;
   const order = [defaultProvider, ...Object.keys(providers).filter((k) => k !== defaultProvider)];
@@ -653,51 +677,56 @@ async function askWithFailover(providerState, context) {
     toolTrace: [],
     httpsAgent,
     signal,
+    sessionState,
   };
 
   let lastError = null;
-  for (const providerName of order) {
-    const providerConfig = providers[providerName];
-    if (!providerConfig?.enabled) {
-      continue;
-    }
-
-    pushTrace(traceContext, {
-      stage: "provider_attempt",
-      provider: providerName,
-    });
-
-    try {
-      checkCancellation();
-      const reply = await askProvider(providerName, providerConfig, traceContext);
-      pushTrace(traceContext, {
-        stage: "provider_success",
-        provider: providerName,
-      });
-      return { provider: providerName, reply, toolTrace: traceContext.toolTrace };
-    } catch (error) {
-      if (
-        currentSessionCancelled ||
-        error?.code === "ERR_CANCELED" ||
-        error?.code === "AGENT_STOPPED" ||
-        (error?.message && error.message.includes("AGENT_STOPPED"))
-      ) {
-        const stoppedErr = new Error("AGENT_STOPPED: Execution terminated by user.");
-        stoppedErr.code = "AGENT_STOPPED";
-        throw stoppedErr;
+  try {
+    for (const providerName of order) {
+      const providerConfig = providers[providerName];
+      if (!providerConfig?.enabled) {
+        continue;
       }
 
-      const formattedError = formatProviderError(error);
-      lastError = new Error(formattedError);
       pushTrace(traceContext, {
-        stage: "provider_error",
+        stage: "provider_attempt",
         provider: providerName,
-        error: formattedError,
       });
-    }
-  }
 
-  throw lastError || new Error("No enabled providers are available.");
+      try {
+        checkCancellation(signal, sessionState);
+        const reply = await askProvider(providerName, providerConfig, traceContext);
+        pushTrace(traceContext, {
+          stage: "provider_success",
+          provider: providerName,
+        });
+        return { provider: providerName, reply, toolTrace: traceContext.toolTrace };
+      } catch (error) {
+        if (
+          sessionState.cancelled ||
+          signal.aborted ||
+          error?.code === "ERR_CANCELED" ||
+          error?.code === "AGENT_STOPPED" ||
+          (error?.message && error.message.includes("AGENT_STOPPED"))
+        ) {
+          const stoppedErr = new Error("AGENT_STOPPED: Execution terminated by user.");
+          stoppedErr.code = "AGENT_STOPPED";
+          throw stoppedErr;
+        }
+
+        const formattedError = formatProviderError(error);
+        lastError = new Error(formattedError);
+        pushTrace(traceContext, {
+          stage: "provider_error",
+          provider: providerName,
+          error: formattedError,
+        });
+      }
+    }
+    throw lastError || new Error("No enabled providers are available.");
+  } finally {
+    activeSessions.delete(sessionId);
+  }
 }
 
 module.exports = {

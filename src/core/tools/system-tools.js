@@ -12,23 +12,70 @@ try {
   // Silent fallback outside Electron
 }
 
-function requestUserApproval(title, message, detail) {
+async function requestUserApproval(title, message, detail) {
   if (!dialog || !BrowserWindow) {
-    return true; // Auto-approve in test/headless environments
+    // In headless or test environments without UI, default to DENY for security (except when explicitly allowed in tests)
+    return process.env.NODE_ENV === "test";
   }
 
-  const focused = BrowserWindow.getFocusedWindow();
-  const choice = dialog.showMessageBoxSync(focused || undefined, {
-    type: "warning",
-    buttons: ["Approve", "Deny"],
-    defaultId: 1,
-    cancelId: 1,
-    title,
-    message,
-    detail,
-  });
+  try {
+    const focused = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    const result = await dialog.showMessageBox(focused || undefined, {
+      type: "warning",
+      buttons: ["Approve", "Deny"],
+      defaultId: 1,
+      cancelId: 1,
+      title,
+      message,
+      detail,
+    });
 
-  return choice === 0;
+    return result.response === 0;
+  } catch (error) {
+    console.error("Failed to render approval dialog:", error);
+    return false; // Default to deny on UI error
+  }
+}
+
+function analyzeCommandConsequences(command, risk) {
+  const cmd = command.trim();
+  const lower = cmd.toLowerCase();
+  const consequences = [];
+
+  if (/\bsudo\b/i.test(cmd) || /\bpkexec\b/i.test(cmd)) {
+    consequences.push("• Requires elevated root privileges on your host system.");
+  }
+  if (/\b(pacman|apt|dnf|zypper|yay|paru|npm|pip|cargo)\s+(install|-s|add)\b/i.test(cmd)) {
+    consequences.push("• Downloads and installs new software packages onto your machine.");
+  }
+  if (/\b(pacman|apt|dnf|zypper|yay|paru|npm|pip)\s+(remove|purge|uninstall|-r)\b/i.test(cmd)) {
+    consequences.push("• Removes existing software packages and dependencies from your system.");
+  }
+  if (/\bsystemctl\s+(stop|disable|mask)\b/i.test(cmd)) {
+    consequences.push("• Stops or disables a running system service, which may impact system functionality.");
+  }
+  if (/\bsystemctl\s+(start|enable|restart)\b/i.test(cmd)) {
+    consequences.push("• Starts or restarts a system service on your machine.");
+  }
+  if (/\b(rm|del|unlink)\b/i.test(cmd)) {
+    consequences.push("• Permanently deletes files or directories from your disk.");
+  }
+  if (/\b(iptables|ufw|netsh)\b/i.test(cmd)) {
+    consequences.push("• Modifies network firewall rules and active ports.");
+  }
+
+  if (consequences.length === 0) {
+    consequences.push("• Executes shell logic on your host environment.");
+  }
+
+  return [
+    `Command: ${cmd}`,
+    `Risk Assessment: ${risk.category} (Score: ${risk.score}/4)`,
+    `Reason: ${risk.reason}`,
+    "",
+    "Expected Consequences:",
+    ...consequences,
+  ].join("\n");
 }
 
 function isSensitivePath(filepath) {
@@ -192,20 +239,22 @@ async function executeSystemCommand(command) {
   }
 
   let approved = false;
+  const consequenceDetail = analyzeCommandConsequences(command, risk);
+
   if (risk.score === 1) {
     approved = true;
     console.log(`Auto-approved low-risk command: ${command}`);
   } else if (risk.score === 3) {
-    approved = requestUserApproval(
+    approved = await requestUserApproval(
       "SECURITY ALERT: High-Risk Command Request",
-      `Hermes Agent is requesting to execute a HIGH-RISK command on your system.`,
-      `Command:\n${command}\n\nReason: ${risk.reason}\n\nWARNING: Modifying system files, registry edits, or networking configurations can damage your operating system.`
+      "Hermes Agent is requesting to execute a HIGH-RISK command on your host system.",
+      consequenceDetail
     );
   } else {
-    approved = requestUserApproval(
+    approved = await requestUserApproval(
       "Execute System Command",
       "Hermes Agent is requesting to execute a command on your computer.",
-      `Command:\n${command}\n\nReason: ${risk.reason}`
+      consequenceDetail
     );
   }
 
@@ -232,7 +281,7 @@ async function executeSystemCommand(command) {
 
 async function readSystemFile(filepath) {
   if (isSensitivePath(filepath)) {
-    const approved = requestUserApproval(
+    const approved = await requestUserApproval(
       "Read Sensitive File",
       "Hermes Agent is requesting to read a sensitive system file.",
       `File path: ${filepath}\n\nWARNING: This file may contain user credentials, keys, or API tokens.`
@@ -262,13 +311,13 @@ async function writeSystemFile(filepath, content) {
   let approved = false;
 
   if (isSensitive) {
-    approved = requestUserApproval(
+    approved = await requestUserApproval(
       "SECURITY WARNING: Write Sensitive System File",
       "Hermes Agent is requesting to modify a highly sensitive system file or user credentials file.",
       `File path: ${filepath}\n\nWARNING: Modifying shell profiles, SSH key rings, system hosts, or credentials files can compromise system security or lock you out of your machine.`
     );
   } else {
-    approved = requestUserApproval(
+    approved = await requestUserApproval(
       "Write System File",
       "Hermes Agent is requesting to write or overwrite a file on your computer.",
       `File path: ${filepath}\n\nWARNING: Modifying system files can break applications or alter OS configurations.`

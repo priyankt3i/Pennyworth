@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld("pennyworth", {
   listDisplays: () => ipcRenderer.invoke("pennyworth:list-displays"),
   captureScreen: (payload) => ipcRenderer.invoke("pennyworth:capture-screen", payload),
   ask: (payload) => ipcRenderer.invoke("pennyworth:ask", payload),
-  cancelAgent: () => ipcRenderer.invoke("pennyworth:cancel-agent"),
+  cancelAgent: (sessionId) => ipcRenderer.invoke("pennyworth:cancel-agent", sessionId),
   onTraceEvent: (handler) => ipcRenderer.on("pennyworth:trace-event", (event, arg) => handler(arg)),
   windowMinimize: () => ipcRenderer.invoke("pennyworth:window-minimize"),
   windowMaximizeToggle: () => ipcRenderer.invoke("pennyworth:window-maximize-toggle"),

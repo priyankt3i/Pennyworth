@@ -13,7 +13,7 @@ const { listOllamaModels, listOpenAIModels, listGeminiModels, invalidateProvider
 const { runtimeState, getAgentContextState } = require("./profiles");
 const { transcribeLocalPcm, terminateWorker } = require("./local-whisper");
 
-const MAX_STREAM_SAMPLES = 80000; // 5 seconds max window at 16kHz for fast inference
+const MAX_STREAM_SAMPLES = 480000; // 30 seconds max window at 16kHz for complete audio capture
 const MIN_TRANSCRIPTION_SAMPLES = 12000; // 0.75 seconds minimum to attempt live whisper
 
 let liveStreamPcmBuffer = new Float32Array(0);
@@ -117,13 +117,97 @@ ipcMain.on("pennyworth:audio-stream-stop", async (event) => {
 
     if (liveStreamPcmBuffer.length > 0) {
       const snapshot = new Float32Array(liveStreamPcmBuffer);
-      const res = await transcribeLocalPcm(snapshot);
-      if (res.ok && res.text && event.sender && !event.sender.isDestroyed()) {
-        event.sender.send("pennyworth:live-transcript-partial", { text: res.text, isFinal: true });
+      let finalText = "";
+      let finalProvider = selectedProvider;
+
+      if (selectedProvider === "local") {
+        const localRes = await transcribeLocalPcm(snapshot);
+        if (localRes.ok && localRes.text) {
+          finalText = localRes.text;
+          finalProvider = "Local Whisper (Offline CPU)";
+        }
+      } else {
+        // Cloud STT Provider (Gemini / OpenAI / Groq / Auto)
+        const wavBuffer = pcmToWavBuffer(snapshot);
+        sendTraceToRenderer({
+          stage: "transcription_start",
+          provider: selectedProvider,
+          details: `Sending complete audio recording to ${selectedProvider}`
+        }, event.sender);
+
+        let openaiKey = "";
+        let geminiKey = "";
+        if (selectedProvider === "openai" || selectedProvider === "auto") {
+          const stored = await getStoredApiKey("openai");
+          openaiKey = stored || process.env.OPENAI_API_KEY || "";
+        }
+        if (selectedProvider === "gemini" || selectedProvider === "auto") {
+          const stored = await getStoredApiKey("gemini");
+          geminiKey = stored || process.env.GEMINI_API_KEY || "";
+        }
+
+        if (selectedProvider === "gemini" && geminiKey) {
+          try {
+            const base64Audio = wavBuffer.toString("base64");
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+            const response = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{
+                  parts: [
+                    { inlineData: { mimeType: "audio/wav", data: base64Audio } },
+                    { text: "Transcribe this spoken audio recording verbatim. Pay close attention to technical computer terms ('mic', 'API', 'Linux', 'bash') and exact digits/numbers spoken. Return only transcript text without quotes or explanations." }
+                  ]
+                }]
+              })
+            });
+            if (response.ok) {
+              const data = await response.json();
+              const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+              if (text) {
+                finalText = text;
+                finalProvider = "Gemini Audio";
+              }
+            }
+          } catch (e) {}
+        } else if (selectedProvider === "openai" && openaiKey) {
+          try {
+            const blob = new Blob([wavBuffer], { type: "audio/wav" });
+            const formData = new FormData();
+            formData.append("file", blob, "speech.wav");
+            formData.append("model", "whisper-1");
+            const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${openaiKey}` },
+              body: formData,
+            });
+            if (response.ok) {
+              const data = await response.json();
+              if (data.text) {
+                finalText = data.text;
+                finalProvider = "OpenAI Whisper";
+              }
+            }
+          } catch (e) {}
+        }
+
+        // Failover to local transcript if cloud did not return
+        if (!finalText) {
+          const localRes = await transcribeLocalPcm(snapshot);
+          if (localRes.ok && localRes.text) {
+            finalText = localRes.text;
+            finalProvider = "Local Whisper (Offline CPU)";
+          }
+        }
+      }
+
+      if (finalText && event.sender && !event.sender.isDestroyed()) {
+        event.sender.send("pennyworth:live-transcript-partial", { text: finalText, isFinal: true });
         sendTraceToRenderer({
           stage: "transcription_final",
-          provider: selectedProvider === "local" ? "Local Whisper (Offline CPU)" : selectedProvider,
-          text: res.text,
+          provider: finalProvider,
+          text: finalText,
         }, event.sender);
       }
     }
@@ -311,6 +395,12 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
       const selectedProvider = payload?.provider || providerState?.transcriptionProvider || "local";
       const { audioBuffer, mimeType = "audio/webm", pcmSamples } = payload || {};
 
+      sendTraceToRenderer({
+        stage: "transcription_start",
+        provider: selectedProvider,
+        details: `Transcribing audio via ${selectedProvider}`
+      }, _event?.sender);
+
       let buffer = audioBuffer ? Buffer.from(audioBuffer) : null;
       let effectiveMime = mimeType;
 
@@ -324,6 +414,11 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
         if (pcmSamples) {
           const localRes = await transcribeLocalPcm(pcmSamples);
           if (localRes.ok && localRes.text) {
+            sendTraceToRenderer({
+              stage: "transcription_success",
+              provider: "Local Whisper (Offline CPU)",
+              text: localRes.text,
+            }, _event?.sender);
             return { ok: true, text: localRes.text, provider: "Local Whisper (Offline CPU)" };
           }
           return { ok: false, error: localRes.error || "Local Whisper transcription failed." };
@@ -352,7 +447,14 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
 
             if (response.ok) {
               const data = await response.json();
-              if (data.text) return { ok: true, text: data.text, provider: "OpenAI Whisper" };
+              if (data.text) {
+                sendTraceToRenderer({
+                  stage: "transcription_success",
+                  provider: "OpenAI Whisper",
+                  text: data.text,
+                }, _event?.sender);
+                return { ok: true, text: data.text, provider: "OpenAI Whisper" };
+              }
             }
           } catch (err) {
             console.warn("OpenAI Whisper transcription failed:", err.message);
@@ -390,7 +492,14 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
             if (response.ok) {
               const data = await response.json();
               const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-              if (text) return { ok: true, text, provider: "Gemini Audio" };
+              if (text) {
+                sendTraceToRenderer({
+                  stage: "transcription_success",
+                  provider: "Gemini Audio",
+                  text,
+                }, _event?.sender);
+                return { ok: true, text, provider: "Gemini Audio" };
+              }
             }
           } catch (err) {
             console.warn("Gemini audio transcription failed:", err.message);
@@ -417,7 +526,14 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
 
             if (response.ok) {
               const data = await response.json();
-              if (data.text) return { ok: true, text: data.text, provider: "Groq Whisper" };
+              if (data.text) {
+                sendTraceToRenderer({
+                  stage: "transcription_success",
+                  provider: "Groq Whisper",
+                  text: data.text,
+                }, _event?.sender);
+                return { ok: true, text: data.text, provider: "Groq Whisper" };
+              }
             }
           } catch (err) {
             console.warn("Groq Whisper transcription failed:", err.message);
@@ -429,6 +545,11 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
       if (pcmSamples) {
         const localRes = await transcribeLocalPcm(pcmSamples);
         if (localRes.ok && localRes.text) {
+          sendTraceToRenderer({
+            stage: "transcription_success",
+            provider: "Local Whisper (Offline CPU)",
+            text: localRes.text,
+          }, _event?.sender);
           return { ok: true, text: localRes.text, provider: "Local Whisper (Offline CPU)" };
         }
       }
@@ -687,8 +808,8 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
     }
   });
 
-  ipcMain.handle("pennyworth:cancel-agent", async () => {
-    cancelCurrentSession();
+  ipcMain.handle("pennyworth:cancel-agent", async (_event, sessionId) => {
+    cancelCurrentSession(sessionId);
     return { ok: true };
   });
 

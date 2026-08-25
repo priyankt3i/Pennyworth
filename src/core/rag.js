@@ -1,4 +1,4 @@
-﻿const fs = require("fs");
+const fs = require("fs");
 const path = require("path");
 
 const STOPWORDS = new Set([
@@ -127,6 +127,9 @@ function shouldUseRag(question, queryTokens) {
 }
 
 function retrieveContext(rootDir, profile, question, limit = 3) {
+  if (!profile) {
+    return [];
+  }
   const docsRoot = path.join(rootDir, "data", "docs", profile);
   const files = walkFiles(docsRoot);
   const queryTokens = tokenize(question);

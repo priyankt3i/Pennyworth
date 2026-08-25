@@ -301,10 +301,11 @@ function reportFailure(context, errorLike, showInChat = false) {
 }
 
 function renderProfileSelect() {
+  if (!el.profileSelect) return;
   el.profileSelect.innerHTML = "";
   const option = document.createElement("option");
-  option.value = state.runtime.profileId;
-  option.textContent = state.runtime.profile.name;
+  option.value = state.runtime?.profileId || "";
+  option.textContent = state.runtime?.profile?.name || "Select OS Profile";
   option.selected = true;
   el.profileSelect.appendChild(option);
 }

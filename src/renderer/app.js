@@ -113,7 +113,10 @@ async function loadRuntime() {
   updateBadges();
   updateTracePanelVisibility();
 
-  el.subTitle.textContent = `${state.system.distro.prettyName} / ${state.system.arch} / ${state.runtime.profile.name}`;
+  const profileName = state.runtime?.profile?.name || "Select OS Profile";
+  const distroName = state.system?.distro?.prettyName || state.system?.platform || "Linux";
+  const archName = state.system?.arch || "x64";
+  el.subTitle.textContent = `${distroName} / ${archName} / ${profileName}`;
   if (el.runtimePill) {
     el.runtimePill.textContent = state.system.platform;
     el.runtimePill.dataset.mode = "neutral";

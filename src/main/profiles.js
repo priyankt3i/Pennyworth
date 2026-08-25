@@ -21,8 +21,6 @@ function normalizeArchLabel(arch) {
 function autoDetectProfileId(distroConfig, systemContext) {
   const profiles = distroConfig?.profiles || {};
   const keys = Object.keys(profiles);
-  const fallbackId = distroConfig?.defaultProfile || keys[0];
-  const fallbackName = profiles?.[fallbackId]?.name || fallbackId;
 
   if (!keys.length) {
     throw new Error("No distro profiles are configured.");
@@ -64,20 +62,22 @@ function autoDetectProfileId(distroConfig, systemContext) {
 
   if (systemContext.platform !== "linux") {
     return {
-      profileId: fallbackId,
-      reason: `Non-Linux host (${systemContext.platform}) detected. Auto target profile: '${fallbackName}'.`,
+      profileId: null,
+      reason: `Non-Linux host (${systemContext.platform}) detected with no matching profile.`,
     };
   }
 
   const distroId = String(systemContext?.distro?.id || "unknown").toLowerCase();
+  const distroName = String(systemContext?.distro?.name || "").toLowerCase();
+  const distroPretty = String(systemContext?.distro?.prettyName || "").toLowerCase();
   const distroIdLike = (systemContext?.distro?.idLike || []).map((x) => String(x).toLowerCase());
   const detectedArch = normalizeArchLabel(systemContext?.arch);
   const pkgPresence = systemContext?.packageManagersPresent || {};
 
   let best = {
-    profileId: fallbackId,
-    score: -999,
-    reason: `No strong match; using default profile '${fallbackId}'.`,
+    profileId: null,
+    score: 0,
+    reason: "OS detection could not automatically match a pre-configured profile. Please select your distro in Settings.",
   };
 
   for (const profileId of keys) {
@@ -93,7 +93,10 @@ function autoDetectProfileId(distroConfig, systemContext) {
     if (distroId === profileIdLower) {
       score += 40;
       reasons.push(`distro id '${distroId}' matched profile id`);
-    } else if (profileName && profileName.includes(distroId)) {
+    } else if (distroName && profileName && (distroName === profileName || distroPretty.includes(profileName))) {
+      score += 35;
+      reasons.push(`distro name matched profile name '${profile.name}'`);
+    } else if (profileName && distroId && profileName.includes(distroId)) {
       score += 30;
       reasons.push(`distro id '${distroId}' matched profile name`);
     }
@@ -113,11 +116,13 @@ function autoDetectProfileId(distroConfig, systemContext) {
       reasons.push(`package manager match (${matchingPkg.join(", ")})`);
     }
 
-    if (supportedArch.includes(detectedArch)) {
-      score += 6;
-      reasons.push(`architecture '${detectedArch}' supported`);
-    } else if (supportedArch.length) {
-      score -= 4;
+    if (score > 0) {
+      if (supportedArch.includes(detectedArch)) {
+        score += 6;
+        reasons.push(`architecture '${detectedArch}' supported`);
+      } else if (supportedArch.length) {
+        score -= 4;
+      }
     }
 
     if (score > best.score) {
@@ -139,14 +144,16 @@ function applyAgentOverrides(systemContext, profile, agentContext) {
   const outputSystemContext = {
     ...systemContext,
   };
-  const outputProfile = {
-    ...profile,
-    documentation: {
-      ...(profile?.documentation || {}),
-    },
-  };
+  const outputProfile = profile
+    ? {
+        ...profile,
+        documentation: {
+          ...(profile?.documentation || {}),
+        },
+      }
+    : null;
 
-  if (agentContext.docsRootUrlOverride) {
+  if (agentContext.docsRootUrlOverride && outputProfile) {
     outputProfile.documentation.rootUrl = agentContext.docsRootUrlOverride;
   }
 
@@ -185,9 +192,10 @@ function runtimeState() {
   const distroConfig = loadDistroConfig(ROOT_DIR);
   const systemContext = getSystemContext();
   const detection = autoDetectProfileId(distroConfig, systemContext);
-  const profileId = detection.profileId;
+  const storedProfileId = storeGet("activeProfileId", null);
+  const profileId = storedProfileId && distroConfig.profiles[storedProfileId] ? storedProfileId : detection.profileId;
   const agentContext = getAgentContextState();
-  const profile = distroConfig.profiles[profileId];
+  const profile = profileId ? distroConfig.profiles[profileId] : null;
   const contextWithOverrides = applyAgentOverrides(systemContext, profile, agentContext);
 
   return {

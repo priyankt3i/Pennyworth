@@ -281,14 +281,20 @@ function registerIpcHandlers(getMainWindow) {
       const state = runtimeState();
       const providerState = await getProviderStateForUi();
 
+      const detectedName =
+        (state.detection.profileId && state.distroConfig.profiles[state.detection.profileId]?.name) ||
+        state.detection.profileId ||
+        state.hostProfileName ||
+        "Unknown OS";
+
       return {
         ok: true,
         detectedProfileId: state.detection.profileId,
-        detectedProfileName: state.distroConfig.profiles[state.detection.profileId]?.name || state.detection.profileId,
+        detectedProfileName: detectedName,
         detectedArchitecture: state.hostArchitecture,
         detectionReason: state.detection.reason,
         targetProfileId: state.profileId,
-        targetProfileName: state.profile?.name || state.profileId,
+        targetProfileName: state.profile?.name || state.profileId || "Unassigned",
         providerConfig: providerState,
         agentContext: state.agentContext,
       };
@@ -590,13 +596,19 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
       const state = runtimeState();
       const providerState = await getProviderStateForUi();
 
+      const detectedName =
+        (state.detection.profileId && state.distroConfig.profiles[state.detection.profileId]?.name) ||
+        state.detection.profileId ||
+        state.hostProfileName ||
+        "Unknown OS";
+
       return {
         ok: true,
         detectedProfileId: state.detection.profileId,
-        detectedProfileName: state.distroConfig.profiles[state.detection.profileId]?.name || state.detection.profileId,
+        detectedProfileName: detectedName,
         detectedArchitecture: state.hostArchitecture,
         targetProfileId: state.profileId,
-        targetProfileName: state.profile?.name || state.profileId,
+        targetProfileName: state.profile?.name || state.profileId || "Unassigned",
         providerConfig: providerState,
         agentContext: state.agentContext,
       };

@@ -1,4 +1,4 @@
-﻿const fs = require("fs");
+const fs = require("fs");
 const os = require("os");
 const { execSync } = require("child_process");
 
@@ -19,26 +19,114 @@ function tryExec(command) {
   }
 }
 
+/**
+ * Check if a command/binary is executable on the host system.
+ * If running inside a containerized sandbox (e.g. Flatpak), fall back to flatpak-spawn.
+ */
 function commandExists(binary) {
   const lookup = process.platform === "win32" ? `where ${binary}` : `command -v ${binary}`;
-  return tryExec(lookup) !== "unknown";
+  let exists = tryExec(lookup) !== "unknown";
+  if (!exists && process.platform === "linux") {
+    // Check host binaries if running inside Flatpak sandbox
+    exists = tryExec(`flatpak-spawn --host command -v ${binary}`) !== "unknown";
+  }
+  return exists;
 }
 
-function readOsRelease() {
-  try {
-    const raw = fs.readFileSync("/etc/os-release", "utf8");
-    const map = {};
-    raw.split("\n").forEach((line) => {
-      const [key, ...rest] = line.split("=");
-      if (!key || rest.length === 0) {
-        return;
-      }
-      map[key] = rest.join("=").replace(/^"|"$/g, "");
-    });
+/**
+ * Parse raw /etc/os-release key-value format into a key-value object.
+ */
+function parseOsRelease(raw) {
+  const map = {};
+  if (!raw || typeof raw !== "string") {
     return map;
-  } catch (error) {
-    return {};
   }
+  raw.split("\n").forEach((line) => {
+    const [key, ...rest] = line.split("=");
+    if (!key || rest.length === 0) {
+      return;
+    }
+    map[key] = rest.join("=").replace(/^"|"$/g, "");
+  });
+  return map;
+}
+
+/**
+ * Check if the os-release map represents a Freedesktop SDK Flatpak runtime base image.
+ */
+function isFreedesktopRuntime(map) {
+  if (!map || typeof map !== "object") {
+    return false;
+  }
+  const id = String(map.ID || "").toLowerCase();
+  const name = String(map.NAME || "").toLowerCase();
+  const prettyName = String(map.PRETTY_NAME || "").toLowerCase();
+  return id === "freedesktop" || name.includes("freedesktop") || prettyName.includes("flatpak runtime");
+}
+
+/**
+ * Read operating system release details, prioritizing host os-release mounts
+ * when running inside Flatpak or container environments.
+ */
+function readOsRelease() {
+  // Candidate mount locations where host os-release is exposed in Flatpak / Distrobox
+  const hostCandidatePaths = [
+    "/run/host/etc/os-release",
+    "/run/host/usr/lib/os-release",
+    "/var/run/host/etc/os-release",
+    "/host/etc/os-release",
+  ];
+
+  // 1. First attempt reading host OS release mounts
+  for (const filePath of hostCandidatePaths) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, "utf8");
+        const map = parseOsRelease(raw);
+        if (Object.keys(map).length > 0 && !isFreedesktopRuntime(map)) {
+          return map;
+        }
+      }
+    } catch (error) {
+      // Ignore missing or unreadable host candidate paths
+    }
+  }
+
+  // 2. Check standard container/system os-release files
+  const standardCandidatePaths = ["/etc/os-release", "/usr/lib/os-release"];
+  let primaryMap = {};
+
+  for (const filePath of standardCandidatePaths) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, "utf8");
+        const map = parseOsRelease(raw);
+        if (Object.keys(map).length > 0) {
+          if (!isFreedesktopRuntime(map)) {
+            return map;
+          }
+          if (Object.keys(primaryMap).length === 0) {
+            primaryMap = map;
+          }
+        }
+      }
+    } catch (error) {
+      // Ignore unreadable standard files
+    }
+  }
+
+  // 3. If standard os-release identified as Freedesktop SDK runtime, attempt flatpak-spawn to host
+  if (process.platform === "linux" && isFreedesktopRuntime(primaryMap)) {
+    const hostOsReleaseRaw = tryExec("flatpak-spawn --host cat /etc/os-release");
+    if (hostOsReleaseRaw && hostOsReleaseRaw !== "unknown") {
+      const hostMap = parseOsRelease(hostOsReleaseRaw);
+      if (Object.keys(hostMap).length > 0 && !isFreedesktopRuntime(hostMap)) {
+        return hostMap;
+      }
+    }
+  }
+
+  return primaryMap;
 }
 
 function inferWindowsFamilyFromRelease(release) {
@@ -196,4 +284,7 @@ function getSystemContext(options = {}) {
 
 module.exports = {
   getSystemContext,
+  readOsRelease,
+  parseOsRelease,
+  isFreedesktopRuntime,
 };

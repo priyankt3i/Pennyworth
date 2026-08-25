@@ -198,19 +198,46 @@ function compactValue(value, max = 700) {
   return `${raw.slice(0, max)} ...`;
 }
 
-let currentSessionCancelled = false;
+const activeSessions = new Map();
+let globalCancelled = false;
 
-function cancelCurrentSession() {
-  currentSessionCancelled = true;
+function cancelCurrentSession(sessionId) {
+  globalCancelled = true;
+  if (sessionId && activeSessions.has(sessionId)) {
+    const session = activeSessions.get(sessionId);
+    session.cancelled = true;
+    if (session.controller) {
+      try {
+        session.controller.abort();
+      } catch (e) {}
+    }
+  } else {
+    for (const session of activeSessions.values()) {
+      session.cancelled = true;
+      if (session.controller) {
+        try {
+          session.controller.abort();
+        } catch (e) {}
+      }
+    }
+  }
 }
 
-function checkCancellation() {
-  if (currentSessionCancelled) {
+function checkCancellation(signal = null, sessionState = null) {
+  if (signal?.aborted || sessionState?.cancelled || globalCancelled) {
     const err = new Error("AGENT_STOPPED: Execution terminated by user.");
     err.code = "AGENT_STOPPED";
     throw err;
   }
+  for (const session of activeSessions.values()) {
+    if (session.cancelled) {
+      const err = new Error("AGENT_STOPPED: Execution terminated by user.");
+      err.code = "AGENT_STOPPED";
+      throw err;
+    }
+  }
 }
+
 
 function pushTrace(context, event) {
   if (!Array.isArray(context?.toolTrace)) {
@@ -325,7 +352,7 @@ async function askOllama(config, context) {
 
   const maxSteps = getAgentMaxSteps(context);
   for (let step = 0; step < maxSteps; step += 1) {
-    checkCancellation();
+    checkCancellation(context.signal, context.sessionState);
     const response = await axios.post(`${baseUrl}/api/chat`, {
       model,
       messages,
@@ -336,6 +363,7 @@ async function askOllama(config, context) {
       },
     }, {
       httpsAgent: context.httpsAgent,
+      signal: context.signal,
     });
 
     const message = response?.data?.message;
@@ -406,6 +434,7 @@ async function askOllama(config, context) {
         stream: false,
       }, {
         httpsAgent: context.httpsAgent,
+        signal: context.signal,
       });
 
       const upgradedReply = synthesis?.data?.message?.content?.trim();
@@ -437,7 +466,7 @@ async function askOpenAI(config, context) {
 
   const maxSteps = getAgentMaxSteps(context);
   for (let step = 0; step < maxSteps; step += 1) {
-    checkCancellation();
+    checkCancellation(context.signal, context.sessionState);
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
@@ -453,6 +482,7 @@ async function askOpenAI(config, context) {
         },
         timeout: 30000,
         httpsAgent: context.httpsAgent,
+        signal: context.signal,
       }
     );
 
@@ -532,7 +562,7 @@ async function askGemini(config, context) {
 
   const maxSteps = getAgentMaxSteps(context);
   for (let step = 0; step < maxSteps; step += 1) {
-    checkCancellation();
+    checkCancellation(context.signal, context.sessionState);
     const response = await axios.post(url, {
       systemInstruction,
       contents,
@@ -542,6 +572,7 @@ async function askGemini(config, context) {
       },
     }, {
       httpsAgent: context.httpsAgent,
+      signal: context.signal,
     });
 
     const candidate = response?.data?.candidates?.[0];
@@ -621,7 +652,13 @@ function formatProviderError(error) {
 }
 
 async function askWithFailover(providerState, context) {
-  currentSessionCancelled = false;
+  globalCancelled = false;
+  const sessionId = context.sessionId || "default";
+  const controller = new AbortController();
+  const sessionState = { controller, cancelled: false };
+  activeSessions.set(sessionId, sessionState);
+  const signal = controller.signal;
+
   const { defaultProvider, providers, customCaCertPath } = providerState;
   const order = [defaultProvider, ...Object.keys(providers).filter((k) => k !== defaultProvider)];
 
@@ -639,39 +676,57 @@ async function askWithFailover(providerState, context) {
     ...context,
     toolTrace: [],
     httpsAgent,
+    signal,
+    sessionState,
   };
 
   let lastError = null;
-  for (const providerName of order) {
-    const providerConfig = providers[providerName];
-    if (!providerConfig?.enabled) {
-      continue;
-    }
+  try {
+    for (const providerName of order) {
+      const providerConfig = providers[providerName];
+      if (!providerConfig?.enabled) {
+        continue;
+      }
 
-    pushTrace(traceContext, {
-      stage: "provider_attempt",
-      provider: providerName,
-    });
-
-    try {
-      const reply = await askProvider(providerName, providerConfig, traceContext);
       pushTrace(traceContext, {
-        stage: "provider_success",
+        stage: "provider_attempt",
         provider: providerName,
       });
-      return { provider: providerName, reply, toolTrace: traceContext.toolTrace };
-    } catch (error) {
-      const formattedError = formatProviderError(error);
-      lastError = new Error(formattedError);
-      pushTrace(traceContext, {
-        stage: "provider_error",
-        provider: providerName,
-        error: formattedError,
-      });
+
+      try {
+        checkCancellation(signal, sessionState);
+        const reply = await askProvider(providerName, providerConfig, traceContext);
+        pushTrace(traceContext, {
+          stage: "provider_success",
+          provider: providerName,
+        });
+        return { provider: providerName, reply, toolTrace: traceContext.toolTrace };
+      } catch (error) {
+        if (
+          sessionState.cancelled ||
+          signal.aborted ||
+          error?.code === "ERR_CANCELED" ||
+          error?.code === "AGENT_STOPPED" ||
+          (error?.message && error.message.includes("AGENT_STOPPED"))
+        ) {
+          const stoppedErr = new Error("AGENT_STOPPED: Execution terminated by user.");
+          stoppedErr.code = "AGENT_STOPPED";
+          throw stoppedErr;
+        }
+
+        const formattedError = formatProviderError(error);
+        lastError = new Error(formattedError);
+        pushTrace(traceContext, {
+          stage: "provider_error",
+          provider: providerName,
+          error: formattedError,
+        });
+      }
     }
+    throw lastError || new Error("No enabled providers are available.");
+  } finally {
+    activeSessions.delete(sessionId);
   }
-
-  throw lastError || new Error("No enabled providers are available.");
 }
 
 module.exports = {

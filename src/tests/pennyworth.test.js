@@ -215,6 +215,74 @@ test("OS Profile Auto-Detection", async (t) => {
     });
     assert.strictEqual(result.profileId, "macos_tahoe");
   });
+
+  await t.test("should resolve Zorin OS specifically on Linux", () => {
+    const mockFullDistroConfig = {
+      defaultProfile: "cachyos",
+      profiles: {
+        cachyos: { name: "CachyOS", family: "arch", architectures: ["x86_64"], packageManagers: ["pacman"] },
+        zorin_os: { name: "Zorin OS", family: "debian", architectures: ["x86_64"], packageManagers: ["apt"] },
+        ubuntu_lts: { name: "Ubuntu LTS", family: "debian", architectures: ["x86_64"], packageManagers: ["apt"] },
+      },
+    };
+    const result = mainModule.autoDetectProfileId(mockFullDistroConfig, {
+      platform: "linux",
+      arch: "x64",
+      distro: { id: "zorin", name: "Zorin OS", prettyName: "Zorin OS 17", idLike: ["ubuntu", "debian"] },
+      packageManagersPresent: { apt: true },
+    });
+    assert.strictEqual(result.profileId, "zorin_os");
+  });
+
+  await t.test("should resolve Ubuntu LTS on Linux", () => {
+    const mockFullDistroConfig = {
+      defaultProfile: "cachyos",
+      profiles: {
+        cachyos: { name: "CachyOS", family: "arch", architectures: ["x86_64"], packageManagers: ["pacman"] },
+        ubuntu_lts: { name: "Ubuntu LTS", family: "debian", architectures: ["x86_64"], packageManagers: ["apt"] },
+      },
+    };
+    const result = mainModule.autoDetectProfileId(mockFullDistroConfig, {
+      platform: "linux",
+      arch: "x64",
+      distro: { id: "ubuntu", name: "Ubuntu", prettyName: "Ubuntu 24.04 LTS", idLike: ["debian"] },
+      packageManagersPresent: { apt: true },
+    });
+    assert.strictEqual(result.profileId, "ubuntu_lts");
+  });
+
+  await t.test("should resolve CachyOS on Arch-based Linux", () => {
+    const mockFullDistroConfig = {
+      defaultProfile: "ubuntu_lts",
+      profiles: {
+        cachyos: { name: "CachyOS", family: "arch", architectures: ["x86_64"], packageManagers: ["pacman"] },
+        ubuntu_lts: { name: "Ubuntu LTS", family: "debian", architectures: ["x86_64"], packageManagers: ["apt"] },
+      },
+    };
+    const result = mainModule.autoDetectProfileId(mockFullDistroConfig, {
+      platform: "linux",
+      arch: "x64",
+      distro: { id: "cachyos", name: "CachyOS", prettyName: "CachyOS Linux", idLike: ["arch"] },
+      packageManagersPresent: { pacman: true },
+    });
+    assert.strictEqual(result.profileId, "cachyos");
+  });
+
+  await t.test("should correctly parse os-release key-values and detect Freedesktop SDK runtime", () => {
+    const systemContextModule = require("../core/system-context");
+    const freedesktopSample = `NAME="Freedesktop SDK"\nVERSION_ID="25.08"\nPRETTY_NAME="Freedesktop SDK 25.08 (Flatpak runtime)"\nID=freedesktop`;
+    const zorinSample = `NAME="Zorin OS"\nVERSION_ID="18"\nPRETTY_NAME="Zorin OS 18.1"\nID=zorin\nID_LIKE="ubuntu debian"`;
+
+    const freedesktopMap = systemContextModule.parseOsRelease(freedesktopSample);
+    assert.strictEqual(freedesktopMap.NAME, "Freedesktop SDK");
+    assert.strictEqual(freedesktopMap.ID, "freedesktop");
+    assert.strictEqual(systemContextModule.isFreedesktopRuntime(freedesktopMap), true);
+
+    const zorinMap = systemContextModule.parseOsRelease(zorinSample);
+    assert.strictEqual(zorinMap.NAME, "Zorin OS");
+    assert.strictEqual(zorinMap.ID, "zorin");
+    assert.strictEqual(systemContextModule.isFreedesktopRuntime(zorinMap), false);
+  });
 });
 
 test("Secure API Key Storage Fallback", async (t) => {
@@ -581,5 +649,29 @@ test("Token Saver Mode System Prompt Directive", async (t) => {
 
     const invalidVal = normalizeAgentContext({ maxToolSteps: 999 });
     assert.strictEqual(invalidVal.maxToolSteps, 10);
+  });
+});
+
+test("Audio Transcription IPC Handler", async (t) => {
+  await t.test("should return clear key guidance when OpenAI key is missing", async () => {
+    const { getStoredApiKey } = require("../main/vault");
+    const storedKey = await getStoredApiKey("openai");
+    if (!storedKey && !process.env.OPENAI_API_KEY) {
+      const payload = { audioBuffer: Buffer.from("fake audio data").buffer };
+      const { ipcMain } = require("electron");
+      const handler = ipcMain._events?.["pennyworth:transcribe-audio"];
+      if (handler) {
+        const res = await handler(null, payload);
+        assert.strictEqual(res.ok, false);
+        assert.match(res.error, /API key/i);
+      }
+    }
+  });
+
+  await t.test("should gracefully manage local whisper worker lifecycle", () => {
+    const { terminateWorker } = require("../main/local-whisper");
+    assert.doesNotThrow(() => {
+      terminateWorker();
+    });
   });
 });

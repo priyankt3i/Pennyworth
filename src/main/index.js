@@ -74,7 +74,12 @@ function toggleWindow() {
     return;
   }
 
-  if (mainWindow.isVisible()) {
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send("pennyworth:summoned");
+  } else if (mainWindow.isVisible() && mainWindow.isFocused()) {
     mainWindow.hide();
   } else {
     mainWindow.show();
@@ -86,6 +91,7 @@ function toggleWindow() {
 function createTray() {
   tray = new Tray(createIcon());
   tray.setToolTip("Pennyworth - Your Linux Butler");
+  tray.on("click", toggleWindow);
   tray.on("double-click", toggleWindow);
 
   const menu = Menu.buildFromTemplate([
@@ -109,6 +115,19 @@ function registerShortcuts() {
 }
 
 if (process.env.NODE_ENV !== "test") {
+  const gotTheLock = app.requestSingleInstanceLock();
+  if (!gotTheLock) {
+    app.quit();
+  } else {
+    app.on("second-instance", () => {
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    });
+  }
+
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
     if (process.platform === "win32") {
@@ -128,6 +147,10 @@ if (process.env.NODE_ENV !== "test") {
 
   app.on("will-quit", () => {
     globalShortcut.unregisterAll();
+    try {
+      const { terminateWorker } = require("./local-whisper");
+      terminateWorker();
+    } catch (e) {}
   });
 
   app.on("window-all-closed", () => {

@@ -82,6 +82,9 @@ function renderToolTrace(toolTrace, providerLabel = "") {
     if (entry?.text) {
       details.push(`text=${entry.text}`);
     }
+    if (entry?.details) {
+      details.push(`details=${entry.details}`);
+    }
 
     return [`#${idx + 1} ${timeText}`, `${provider}/${stage}`, ...details].join(" | ");
   });
@@ -110,7 +113,10 @@ async function loadRuntime() {
   updateBadges();
   updateTracePanelVisibility();
 
-  el.subTitle.textContent = `${state.system.distro.prettyName} / ${state.system.arch} / ${state.runtime.profile.name}`;
+  const profileName = state.runtime?.profile?.name || "Select OS Profile";
+  const distroName = state.system?.distro?.prettyName || state.system?.platform || "Linux";
+  const archName = state.system?.arch || "x64";
+  el.subTitle.textContent = `${distroName} / ${archName} / ${profileName}`;
   if (el.runtimePill) {
     el.runtimePill.textContent = state.system.platform;
     el.runtimePill.dataset.mode = "neutral";
@@ -732,9 +738,12 @@ async function init() {
   async function stopAgent() {
     setStatus("Stopping agent...");
     try {
-      await window.pennyworth.cancelAgent();
+      await window.pennyworth.cancelAgent(state.activeSessionId);
+      if (typeof setBusy === "function") setBusy(false);
+      setStatus("Agent stopped.", "warn");
     } catch (err) {
       console.error("Cancel agent error:", err);
+      if (typeof setBusy === "function") setBusy(false);
       setStatus("Failed to stop agent.", "error");
     }
   }

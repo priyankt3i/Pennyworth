@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld("pennyworth", {
   listDisplays: () => ipcRenderer.invoke("pennyworth:list-displays"),
   captureScreen: (payload) => ipcRenderer.invoke("pennyworth:capture-screen", payload),
   ask: (payload) => ipcRenderer.invoke("pennyworth:ask", payload),
-  cancelAgent: () => ipcRenderer.invoke("pennyworth:cancel-agent"),
+  cancelAgent: (sessionId) => ipcRenderer.invoke("pennyworth:cancel-agent", sessionId),
   onTraceEvent: (handler) => ipcRenderer.on("pennyworth:trace-event", (event, arg) => handler(arg)),
   windowMinimize: () => ipcRenderer.invoke("pennyworth:window-minimize"),
   windowMaximizeToggle: () => ipcRenderer.invoke("pennyworth:window-maximize-toggle"),
@@ -31,4 +31,8 @@ contextBridge.exposeInMainWorld("pennyworth", {
   vaultStatus: () => ipcRenderer.invoke("pennyworth:vault-status"),
   vaultSetup: (passphrase) => ipcRenderer.invoke("pennyworth:vault-setup", passphrase),
   vaultUnlock: (passphrase) => ipcRenderer.invoke("pennyworth:vault-unlock", passphrase),
+  transcribeAudio: (payload) => ipcRenderer.invoke("pennyworth:transcribe-audio", payload),
+  sendAudioStreamChunk: (payload) => ipcRenderer.send("pennyworth:audio-stream-chunk", payload),
+  stopAudioStream: () => ipcRenderer.send("pennyworth:audio-stream-stop"),
+  onLiveTranscriptPartial: (handler) => ipcRenderer.on("pennyworth:live-transcript-partial", (_event, arg) => handler(arg)),
 });

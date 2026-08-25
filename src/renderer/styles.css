@@ -609,6 +609,13 @@ select:disabled {
   border-radius: 8px;
 }
 
+#voiceBtn.recording {
+  background: #e63946 !important;
+  color: #ffffff !important;
+  border-color: #e63946 !important;
+  box-shadow: 0 0 10px rgba(230, 57, 70, 0.6);
+}
+
 #promptInput {
   width: 100%;
   min-height: 82px;

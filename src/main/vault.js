@@ -35,12 +35,13 @@ function getEncryptionKey() {
 
 function encrypt(text) {
   try {
-    const iv = crypto.randomBytes(16);
+    const iv = crypto.randomBytes(12);
     const key = getEncryptionKey();
-    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
     let encrypted = cipher.update(text, "utf8", "hex");
     encrypted += cipher.final("hex");
-    return `${iv.toString("hex")}:${encrypted}`;
+    const tag = cipher.getAuthTag();
+    return `${iv.toString("hex")}:${tag.toString("hex")}:${encrypted}`;
   } catch (error) {
     console.error("Encryption failed:", error.message);
     throw error;
@@ -50,16 +51,28 @@ function encrypt(text) {
 function decrypt(encryptedText) {
   try {
     const parts = encryptedText.split(":");
-    if (parts.length !== 2) {
-      return "";
-    }
-    const iv = Buffer.from(parts[0], "hex");
-    const encrypted = parts[1];
     const key = getEncryptionKey();
-    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-    let decrypted = decipher.update(encrypted, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-    return decrypted;
+
+    if (parts.length === 3) {
+      // AES-256-GCM authenticated decryption
+      const iv = Buffer.from(parts[0], "hex");
+      const tag = Buffer.from(parts[1], "hex");
+      const encrypted = parts[2];
+      const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+      decipher.setAuthTag(tag);
+      let decrypted = decipher.update(encrypted, "hex", "utf8");
+      decrypted += decipher.final("utf8");
+      return decrypted;
+    } else if (parts.length === 2) {
+      // Legacy AES-256-CBC decipher fallback
+      const iv = Buffer.from(parts[0], "hex");
+      const encrypted = parts[1];
+      const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+      let decrypted = decipher.update(encrypted, "hex", "utf8");
+      decrypted += decipher.final("utf8");
+      return decrypted;
+    }
+    return "";
   } catch (error) {
     console.error("Decryption failed:", error.message);
     throw error;
@@ -149,20 +162,33 @@ function unlockVault(passphrase) {
   }
   const activeSalt = getActiveSalt();
   const tempKey = deriveKeyFromPassphrase(passphrase, activeSalt);
-  
-  const parts = sentinel.split(":");
-  const iv = Buffer.from(parts[0], "hex");
-  const encrypted = parts[1];
-  const decipher = crypto.createDecipheriv("aes-256-cbc", tempKey, iv);
-  let decrypted = decipher.update(encrypted, "hex", "utf8");
-  decrypted += decipher.final("utf8");
 
-  if (decrypted === "pennyworth-vault-unlocked-sentinel") {
-    sessionEncryptionKey = tempKey;
-    return true;
-  } else {
-    throw new Error("Incorrect master passphrase.");
-  }
+  try {
+    const parts = sentinel.split(":");
+    let decrypted = "";
+    if (parts.length === 3) {
+      const iv = Buffer.from(parts[0], "hex");
+      const tag = Buffer.from(parts[1], "hex");
+      const encrypted = parts[2];
+      const decipher = crypto.createDecipheriv("aes-256-gcm", tempKey, iv);
+      decipher.setAuthTag(tag);
+      decrypted = decipher.update(encrypted, "hex", "utf8");
+      decrypted += decipher.final("utf8");
+    } else {
+      const iv = Buffer.from(parts[0], "hex");
+      const encrypted = parts[1];
+      const decipher = crypto.createDecipheriv("aes-256-cbc", tempKey, iv);
+      decrypted = decipher.update(encrypted, "hex", "utf8");
+      decrypted += decipher.final("utf8");
+    }
+
+    if (decrypted === "pennyworth-vault-unlocked-sentinel") {
+      sessionEncryptionKey = tempKey;
+      return true;
+    }
+  } catch (e) {}
+
+  throw new Error("Incorrect master passphrase.");
 }
 
 module.exports = {

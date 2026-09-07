@@ -440,7 +440,9 @@ select:disabled {
 
 .message .message-body h2,
 .message .message-body h3,
-.message .message-body h4 {
+.message .message-body h4,
+.message .message-body h5,
+.message .message-body h6 {
   margin: 14px 0 8px;
   line-height: 1.25;
   font-weight: 600;
@@ -457,6 +459,11 @@ select:disabled {
 
 .message .message-body h4 {
   font-size: 0.96rem;
+}
+
+.message .message-body h5,
+.message .message-body h6 {
+  font-size: 0.92rem;
 }
 
 .message .message-body code {

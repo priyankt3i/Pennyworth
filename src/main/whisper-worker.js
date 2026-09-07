@@ -9,7 +9,7 @@ let isBusy = false;
 
 async function getTranscriber() {
   if (transcriberPipeline) return transcriberPipeline;
-  const { pipeline, env } = await import("@xenova/transformers");
+  const { pipeline, env } = await import("@huggingface/transformers");
   env.allowLocalModels = true;
   env.allowRemoteModels = true;
 
@@ -23,7 +23,8 @@ async function getTranscriber() {
 
   // Use INT8 quantized model for 4x faster CPU inference speed
   transcriberPipeline = await pipeline("automatic-speech-recognition", "Xenova/whisper-tiny.en", {
-    quantized: true,
+    dtype: "q8",
+    device: "cpu",
   });
   return transcriberPipeline;
 }
@@ -104,8 +105,6 @@ parentPort.on("message", async (msg) => {
     }
 
     const output = await transcriber(floatArray, {
-      language: "english",
-      task: "transcribe",
       return_timestamps: false,
     });
 

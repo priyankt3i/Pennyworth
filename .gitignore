@@ -10,3 +10,4 @@ package-lock.json
 .claude/
 agent/
 data/
+package-lock.json

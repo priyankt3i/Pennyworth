@@ -106,7 +106,7 @@ async function switchSessionFlow(sessionId) {
       clearChatDisplay();
       
       state.history.forEach((msg) => {
-        const label = msg.role === "user" ? "You" : "Hermes";
+        const label = msg.role === "user" ? "You" : "Pennyworth";
         appendMessage(msg.role, msg.content, label);
       });
 
@@ -118,8 +118,8 @@ async function switchSessionFlow(sessionId) {
           const systemName = state.system?.distro?.prettyName || state.system?.platform || "PC";
           appendMessage(
             "assistant",
-            `Hermes Agent ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
-            "Hermes"
+            `Pennyworth ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
+            "Pennyworth"
           );
         }
       }
@@ -156,8 +156,8 @@ async function createNewSessionFlow() {
         const systemName = state.system?.distro?.prettyName || state.system?.platform || "PC";
         appendMessage(
           "assistant",
-          `Hermes Agent ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
-          "Hermes"
+          `Pennyworth ready. System context initialized for ${systemName}. How can I assist you with your system configurations or package management today?`,
+          "Pennyworth"
         );
       }
 
@@ -250,9 +250,12 @@ function renderMarkdown(input) {
   processed = processed.replace(/`([^`\n]+)`/g, "<code>$1</code>");
   processed = processed.replace(/\*\*([^*][\s\S]*?)\*\*/g, "<strong>$1</strong>");
   processed = processed.replace(/(^|\s)\*([^*\n][\s\S]*?)\*(?=\s|$)/g, "$1<em>$2</em>");
-  processed = processed.replace(/^###\s+(.+)$/gm, "<h4>$1</h4>");
-  processed = processed.replace(/^##\s+(.+)$/gm, "<h3>$1</h3>");
-  processed = processed.replace(/^#\s+(.+)$/gm, "<h2>$1</h2>");
+  // Support all six heading levels and tolerate numbered headings such as
+  // "####2. Limit Flatpak". Preserve the existing compact h2–h4 sizing.
+  processed = processed.replace(/^[ \t]{0,3}(#{1,6})(?!#)(?:[ \t]+|(?=\d+[.)]?(?:[ \t]|$)))([^\r\n]+)$/gm, (_match, hashes, title) => {
+    const level = Math.min(hashes.length + 1, 6);
+    return `<h${level}>${title}</h${level}>`;
+  });
   processed = processed.replace(/^\s*-\s+(.+)$/gm, "- $1");
   processed = processed.replace(/\n/g, "<br>");
 
@@ -360,8 +363,8 @@ function appendWelcomeSetupCard() {
     
     <div class="setup-options-container" style="display:flex; flex-direction:column; gap:12px; margin: 16px 0;">
       <div class="setup-option-card" style="border:1px solid var(--border); padding:14px; border-radius:8px; background:rgba(0,0,0,0.02); text-align:left;">
-        <strong style="color:var(--text); font-size:0.92rem; display:block; margin-bottom:4px;">Option 1: Bootstrap Local Ollama (Recommended)</strong>
-        <span style="font-size:0.8rem; color:var(--muted); display:block; margin-bottom:12px;">Installs Ollama, starts the local service, and downloads <strong>Qwen 2.5 Coder 1.5B</strong> automatically. Safe, private, and works offline.</span>
+        <strong style="color:var(--text); font-size:0.92rem; display:block; margin-bottom:4px;">Option 1: Connect Local Ollama</strong>
+        <span style="font-size:0.8rem; color:var(--muted); display:block; margin-bottom:12px;">Connects to an installed Ollama service and downloads <strong>Qwen 2.5 Coder 1.5B</strong>. Starting the service may request approval. Model downloads need internet access; inference runs locally.</span>
         <button id="setupLocalOllamaBtn" class="no-drag" type="button" style="background:var(--accent); color:white; border:none; padding:8px 14px; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.82rem; transition: background 0.2s;">Download & Set Up Local LLM</button>
       </div>
       
@@ -403,25 +406,25 @@ function appendWelcomeSetupCard() {
     
     try {
       progressTitle.textContent = "Bootstrapping Ollama...";
-      progressStatus.textContent = "Installing Ollama on your system (this may request authorization)...";
+      progressStatus.textContent = "Connecting to Ollama (starting the service may request approval)...";
       progressBar.style.width = "10%";
 
       const installRes = await window.pennyworth.bootstrapOllama();
       if (!installRes.ok) {
-        throw new Error(installRes.error || "Ollama installation failed.");
+        throw new Error(installRes.error || "Ollama could not be connected or started.");
       }
 
       progressBar.style.width = "40%";
-      progressStatus.textContent = "Ollama installed & service running.";
+      progressStatus.textContent = "Ollama service is running.";
 
       if (window.pennyworth.showNativeNotification) {
         window.pennyworth.showNativeNotification({
           title: "Pennyworth - Ollama Installed",
-          body: "Ollama service installed & started successfully. Now downloading model..."
+          body: "Ollama service is ready. Now downloading model..."
         });
       }
       if (typeof pushNotification === "function") {
-        pushNotification("ok", "Ollama installed & background service running.");
+        pushNotification("ok", "Ollama service is running.");
       }
 
       progressBar.style.width = "50%";

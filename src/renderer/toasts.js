@@ -10,6 +10,8 @@ function setStatus(text, mode = "info") {
 }
 
 function pushNotification(type, message) {
+  type = ["ok", "info", "warn", "error"].includes(type) ? type : "info";
+  message = String(message || "");
   const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const notification = {
     id: Math.random().toString(36).substr(2, 9),
@@ -37,7 +39,7 @@ function pushNotification(type, message) {
 
     toast.innerHTML = `
       <span style="font-weight:700; text-transform:uppercase; font-size:0.7rem; margin-right:4px;">${type === "ok" ? "success" : type}:</span>
-      <span class="toast-msg">${displayMsg}</span>
+      <span class="toast-msg">${escapeHtml(displayMsg)}</span>
       <button class="toast-close" type="button">×</button>
     `;
 
@@ -115,7 +117,7 @@ function renderNotificationsList() {
       <span class="notification-time">${item.timestamp}</span>
       <span class="notification-msg">
         <strong style="text-transform:uppercase; font-size:0.75rem; color:var(--text); display:inline-block; margin-right:4px;">${item.type === "ok" ? "success" : item.type}:</strong>
-        ${item.message}
+        ${escapeHtml(item.message)}
       </span>
     `;
     el.notificationsList.appendChild(card);

@@ -81,7 +81,7 @@ const OPENAI_TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "execute_system_command",
-      description: "Execute a shell command on the host system. Always check systemContext to ensure the command matches the operating system (e.g. bash for Linux, PowerShell/CMD for Windows). Sudo/root commands are allowed but will require user approval.",
+      description: "Execute a shell command in Pennyworth's process environment, which may be sandboxed. Check systemContext.execution and execution metadata in results; never assume host desktop access. Always check systemContext to ensure the command matches the operating system (e.g. bash for Linux, PowerShell/CMD for Windows). Sudo/root commands are allowed but will require user approval.",
       parameters: {
         type: "object",
         properties: {

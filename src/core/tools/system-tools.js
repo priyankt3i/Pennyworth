@@ -1,15 +1,31 @@
 const fs = require("fs");
+const { getExecutionContext } = require("../execution-context");
 const path = require("path");
 const os = require("os");
 const { exec, execSync } = require("child_process");
 
-let dialog, BrowserWindow;
+let dialog, BrowserWindow, nativeImage;
 try {
   const electron = require("electron");
   dialog = electron.dialog;
+  nativeImage = electron.nativeImage;
   BrowserWindow = electron.BrowserWindow;
 } catch (e) {
   // Silent fallback outside Electron
+}
+
+function riskIcon(title) {
+  if (!nativeImage?.createFromBitmap) return undefined;
+  const high = /HIGH|CRITICAL|Sensitive|WARNING/.test(title);
+  const pixels = Buffer.alloc(32 * 32 * 4);
+  const [r, g, b] = high ? [220, 38, 38] : [217, 119, 6];
+  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+    const offset = (y * 32 + x) * 4;
+    if ((x - 15.5) ** 2 + (y - 15.5) ** 2 <= 225) {
+      pixels.set([b, g, r, 255], offset);
+    }
+  }
+  return nativeImage.createFromBitmap(pixels, { width: 32, height: 32 });
 }
 
 async function requestUserApproval(title, message, detail) {
@@ -22,6 +38,7 @@ async function requestUserApproval(title, message, detail) {
     const focused = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
     const result = await dialog.showMessageBox(focused || undefined, {
       type: "warning",
+      icon: riskIcon(title),
       buttons: ["Approve", "Deny"],
       defaultId: 1,
       cancelId: 1,
@@ -37,13 +54,24 @@ async function requestUserApproval(title, message, detail) {
   }
 }
 
+function classifyCommandAccess(command) {
+  // Conservative: shell composition, expansion and arbitrary scripts may write.
+  if (/[;&|><`$\n\r]/.test(command)) return "MAY WRITE (shell logic or redirection)";
+  const cmd = command.trim();
+  if (/^(?:gsettings\s+(?:set|reset|reset-recursively)|dconf\s+(?:write|reset|load)|(?:touch|mkdir|rm|mv|cp|chmod|chown|tee)\b|(?:npm|pip|apt|dnf)\s+(?:install|remove|uninstall))\b/i.test(cmd)) return "WRITE";
+  if (/^(?:pwd|whoami|hostname)$|^(?:uname|df|free)(?:\s+[-\w]+)*$/.test(cmd) ||
+      /^(?:gsettings\s+(?:get|list-recursively|list-keys|list-schemas)|dconf\s+read)\s+[\w./:-]+(?:\s+[\w.-]+)?$/.test(cmd) ||
+      /^(?:git status|git log|git diff|systemctl status|ps aux)(?:\s+[-\w./]+)*$/.test(cmd) && !/--(?:output|ext-diff|textconv|exec)/.test(cmd)) return "READ";
+  return "MAY WRITE (effects not verified)";
+}
+
 function analyzeCommandConsequences(command, risk) {
   const cmd = command.trim();
   const lower = cmd.toLowerCase();
   const consequences = [];
 
   if (/\bsudo\b/i.test(cmd) || /\bpkexec\b/i.test(cmd)) {
-    consequences.push("• Requires elevated root privileges on your host system.");
+    consequences.push("• Requires elevated root privileges in the execution environment.");
   }
   if (/\b(pacman|apt|dnf|zypper|yay|paru|npm|pip|cargo)\s+(install|-s|add)\b/i.test(cmd)) {
     consequences.push("• Downloads and installs new software packages onto your machine.");
@@ -65,11 +93,13 @@ function analyzeCommandConsequences(command, risk) {
   }
 
   if (consequences.length === 0) {
-    consequences.push("• Executes shell logic on your host environment.");
+    consequences.push("• Executes shell logic in the execution environment.");
   }
 
   return [
     `Command: ${cmd}`,
+    `Access: ${classifyCommandAccess(command)}`,
+    `Execution: ${getExecutionContext().scope}`,
     `Risk Assessment: ${risk.category} (Score: ${risk.score}/4)`,
     `Reason: ${risk.reason}`,
     "",
@@ -166,6 +196,7 @@ function assessCommandRisk(command) {
   // 2. High Risk (Risk 3 - Mandatory explicit approval)
   const highRiskPatterns = [
     /sudo\s+/i,
+    /pkexec\s+/i,
     /runas/i,
     /systemctl\s+(enable|disable|stop|mask)/i,
     /registry\s+/i,
@@ -223,7 +254,7 @@ function assessCommandRisk(command) {
     return normalized === prefix || normalized.startsWith(prefix + " ");
   });
 
-  if (matchesLowRisk) {
+  if (matchesLowRisk && classifyCommandAccess(command) === "READ") {
     return { score: 1, category: "LOW_RISK_ALLOWLIST", reason: "Read-only query of git status, system versions, disk space, or process lists." };
   }
 
@@ -235,25 +266,26 @@ async function executeSystemCommand(command) {
   const risk = assessCommandRisk(command);
   
   if (risk.score === 4) {
-    return `SECURITY_BLOCKED: Command was blocked by Pennyworth's Security Guard.\nReason: ${risk.reason}\nAction: Please execute this command manually in your own terminal if it is safe.`;
+    return `🔴 CRITICAL RISK (4/4) — SECURITY_BLOCKED: Command was blocked by Pennyworth's Security Guard.\nReason: ${risk.reason}\nAction: Please execute this command manually in your own terminal if it is safe.`;
   }
 
   let approved = false;
   const consequenceDetail = analyzeCommandConsequences(command, risk);
+  const execution = getExecutionContext();
 
   if (risk.score === 1) {
     approved = true;
     console.log(`Auto-approved low-risk command: ${command}`);
   } else if (risk.score === 3) {
     approved = await requestUserApproval(
-      "SECURITY ALERT: High-Risk Command Request",
-      "Hermes Agent is requesting to execute a HIGH-RISK command on your host system.",
+      "🔴 HIGH RISK — Command Approval",
+      `🔴 HIGH RISK (3/4) · ${classifyCommandAccess(command)}`,
       consequenceDetail
     );
   } else {
     approved = await requestUserApproval(
-      "Execute System Command",
-      "Hermes Agent is requesting to execute a command on your computer.",
+      "🟠 MEDIUM RISK — Command Approval",
+      `🟠 MEDIUM RISK (2/4) · ${classifyCommandAccess(command)}`,
       consequenceDetail
     );
   }
@@ -274,7 +306,7 @@ async function executeSystemCommand(command) {
       if (error) {
         output += `--- ERROR ---\nExit Code: ${error.code}\n${error.message}\n`;
       }
-      resolve(output || "Command executed successfully but returned no output.");
+      resolve(`Execution context: ${JSON.stringify(execution)}\nAccess: ${classifyCommandAccess(command)}\n\n${output || "Command executed successfully but returned no output."}`);
     });
   });
 }
@@ -342,7 +374,7 @@ async function writeSystemFile(filepath, content) {
 
 function getSystemStatus(aspect = "all") {
   const isWin = os.platform() === "win32";
-  const status = {};
+  const status = { execution: getExecutionContext() };
 
   if (aspect === "cpu" || aspect === "memory" || aspect === "all") {
     status.resources = {
@@ -390,6 +422,8 @@ function getSystemStatus(aspect = "all") {
 }
 
 module.exports = {
+  classifyCommandAccess,
+  analyzeCommandConsequences,
   assessCommandRisk,
   executeSystemCommand,
   readSystemFile,

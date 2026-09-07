@@ -540,9 +540,9 @@ function extractGeminiText(candidate) {
     .trim();
 }
 
-function extractGeminiFunctionCall(candidate) {
+function extractGeminiFunctionCalls(candidate) {
   const parts = candidate?.content?.parts || [];
-  return parts.find((part) => part.functionCall)?.functionCall;
+  return parts.map((part) => part.functionCall).filter((call) => call?.name);
 }
 
 async function askGemini(config, context) {
@@ -561,12 +561,23 @@ async function askGemini(config, context) {
   };
 
   const maxSteps = getAgentMaxSteps(context);
-  for (let step = 0; step < maxSteps; step += 1) {
+  const limitMessage = `Tool execution limit (${maxSteps} rounds) reached. Some work may remain; ask me to continue if needed.`;
+  // Reserve one additional request to synthesize the last round's results.
+  for (let step = 0; step <= maxSteps; step += 1) {
     checkCancellation(context.signal, context.sessionState);
+    const finalTurn = step === maxSteps;
+    if (finalTurn) {
+      pushTrace(context, { stage: "tool_limit_reached", provider: "gemini", maxSteps });
+    }
     const response = await axios.post(url, {
-      systemInstruction,
+      systemInstruction: finalTurn ? {
+        parts: [...systemInstruction.parts, {
+          text: "The tool execution budget is exhausted. Summarize the results collected so far and clearly state any unfinished work. Do not request more tools or claim unfinished actions succeeded.",
+        }],
+      } : systemInstruction,
       contents,
       tools: [{ functionDeclarations: getGeminiFunctionDeclarations() }],
+      ...(finalTurn ? { toolConfig: { functionCallingConfig: { mode: "NONE" } } } : {}),
       generationConfig: {
         temperature: 0.2,
       },
@@ -574,40 +585,42 @@ async function askGemini(config, context) {
       httpsAgent: context.httpsAgent,
       signal: context.signal,
     });
+    checkCancellation(context.signal, context.sessionState);
 
     const candidate = response?.data?.candidates?.[0];
-    const functionCall = extractGeminiFunctionCall(candidate);
+    const functionCalls = extractGeminiFunctionCalls(candidate);
 
-    if (functionCall?.name) {
-      const args = functionCall.args || {};
-      pushTrace(context, {
-        stage: "model_tool_request",
-        provider: "gemini",
-        tool: functionCall.name,
-        args: compactValue(args),
-      });
+    if (functionCalls.length && !finalTurn) {
+      const responseParts = [];
+      for (const functionCall of functionCalls) {
+        checkCancellation(context.signal, context.sessionState);
+        const args = functionCall.args || {};
+        pushTrace(context, {
+          stage: "model_tool_request",
+          provider: "gemini",
+          tool: functionCall.name,
+          args: compactValue(args),
+        });
 
-      const resultText = await runToolAndFormat(functionCall.name, args, context, "gemini");
-
-      contents.push(candidate.content);
-      contents.push({
-        role: "user",
-        parts: [
-          {
-            functionResponse: {
-              name: functionCall.name,
-              response: {
-                result: resultText,
-              },
-            },
+        const resultText = await runToolAndFormat(functionCall.name, args, context, "gemini");
+        responseParts.push({
+          functionResponse: {
+            ...(functionCall.id != null ? { id: functionCall.id } : {}),
+            name: functionCall.name,
+            response: { result: resultText },
           },
-        ],
-      });
-
+        });
+      }
+      // Preserve the entire model turn, including thought signatures.
+      contents.push(candidate.content);
+      contents.push({ role: "user", parts: responseParts });
       continue;
     }
 
-    const text = extractGeminiText(candidate) || "Gemini returned an empty response.";
+    const reply = extractGeminiText(candidate);
+    const text = finalTurn
+      ? [reply, limitMessage].filter(Boolean).join("\n\n")
+      : reply || "Gemini returned an empty response.";
     pushTrace(context, {
       stage: "final_response",
       provider: "gemini",
@@ -615,8 +628,6 @@ async function askGemini(config, context) {
     });
     return text;
   }
-
-  throw new Error(`Gemini tool-calling loop exceeded maximum steps (${maxSteps}).`);
 }
 
 async function askProvider(providerName, providerConfig, context) {

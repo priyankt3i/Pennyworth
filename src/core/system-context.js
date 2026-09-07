@@ -1,4 +1,5 @@
 const fs = require("fs");
+const { getExecutionContext } = require("./execution-context");
 const os = require("os");
 const { execSync } = require("child_process");
 
@@ -246,6 +247,7 @@ function buildSystemContext() {
   const osRelease = readOsRelease();
 
   return {
+    execution: getExecutionContext(),
     hostname: os.hostname(),
     platform,
     arch: os.arch(),

@@ -3,6 +3,9 @@ const { safeStorage } = require("electron");
 const { storeGet, storeSet } = require("./store");
 
 let sessionEncryptionKey = null;
+function secureStorageAvailable() {
+  return safeStorage.isEncryptionAvailable() && safeStorage.getSelectedStorageBackend?.() !== "basic_text";
+}
 
 const STATIC_SALT_FALLBACK = "pennyworth-vault-salt-secure-unique-string-1337";
 
@@ -81,7 +84,7 @@ function decrypt(encryptedText) {
 
 async function getStoredApiKey(account) {
   try {
-    if (safeStorage.isEncryptionAvailable()) {
+    if (secureStorageAvailable()) {
       const encryptedHex = storeGet(`secret_${account}`);
       if (encryptedHex) {
         const buffer = Buffer.from(encryptedHex, "hex");
@@ -107,7 +110,7 @@ async function getStoredApiKey(account) {
 
 async function setStoredApiKey(account, value) {
   try {
-    if (safeStorage.isEncryptionAvailable()) {
+    if (secureStorageAvailable()) {
       const buffer = safeStorage.encryptString(value);
       storeSet(`secret_${account}`, buffer.toString("hex"));
       storeSet(`secret_fallback_${account}`, undefined);
@@ -136,13 +139,14 @@ async function clearStoredApiKey(account) {
 }
 
 function getVaultStatus() {
-  const hasSafeStorage = safeStorage.isEncryptionAvailable();
+  const hasSafeStorage = secureStorageAvailable();
   const isSetup = Boolean(storeGet("vaultSentinel"));
   const isLocked = !hasSafeStorage && !sessionEncryptionKey;
   return { hasSafeStorage, isSetup, isLocked };
 }
 
 function setupVault(passphrase) {
+  if (storeGet("vaultSentinel")) throw new Error("Vault is already initialized. Reinitialization would make existing credentials unreadable.");
   if (!passphrase || passphrase.length < 8) {
     throw new Error("Passphrase must be at least 8 characters long.");
   }
@@ -192,6 +196,7 @@ function unlockVault(passphrase) {
 }
 
 module.exports = {
+  secureStorageAvailable,
   encrypt,
   decrypt,
   getStoredApiKey,

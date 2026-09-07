@@ -87,7 +87,7 @@ async function getProviderStateForUi() {
     : "";
 
   return {
-    secureStorageAvailable: require("electron").safeStorage.isEncryptionAvailable(),
+    secureStorageAvailable: require("./vault").secureStorageAvailable(),
     defaultProvider: providerState.defaultProvider,
     transcriptionProvider: providerState.transcriptionProvider || "local",
     customCaCertPath: providerState.customCaCertPath,

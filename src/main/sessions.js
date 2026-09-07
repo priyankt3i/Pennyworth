@@ -1,17 +1,19 @@
 const fs = require("fs");
 const path = require("path");
 const { app } = require("electron");
+const { checkedPath, openRegularFile, openParent } = require("../core/safe-path");
 
 function getSessionFilePath(sessionId) {
-  const sessionsDir = path.join(app.getPath("userData"), "sessions");
+  if (typeof sessionId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId)) throw new Error("Invalid session ID.");
+  const sessionsDir = checkedPath(path.join(app.getPath("userData"), "sessions"));
   if (!fs.existsSync(sessionsDir)) {
     fs.mkdirSync(sessionsDir, { recursive: true });
   }
-  return path.join(sessionsDir, `${sessionId}.json`);
+  return checkedPath(path.join(sessionsDir, `${sessionId}.json`));
 }
 
 function listSessions() {
-  const sessionsDir = path.join(app.getPath("userData"), "sessions");
+  const sessionsDir = checkedPath(path.join(app.getPath("userData"), "sessions"));
   if (!fs.existsSync(sessionsDir)) {
     return [];
   }
@@ -20,7 +22,7 @@ function listSessions() {
 
   for (const file of files) {
     try {
-      const data = JSON.parse(fs.readFileSync(path.join(sessionsDir, file), "utf8"));
+      const data = loadSession(file.slice(0, -5));
       sessions.push({
         id: data.id,
         title: data.title || "Untitled Chat",
@@ -39,7 +41,11 @@ function listSessions() {
 function loadSession(sessionId) {
   const filepath = getSessionFilePath(sessionId);
   if (fs.existsSync(filepath)) {
-    return JSON.parse(fs.readFileSync(filepath, "utf8"));
+    const { fd, stat } = openRegularFile(filepath);
+    try {
+      if (stat.size > 10 * 1024 * 1024) throw new Error("Session file too large.");
+      return JSON.parse(fs.readFileSync(fd, "utf8"));
+    } finally { fs.closeSync(fd); }
   }
   return null;
 }
@@ -47,7 +53,8 @@ function loadSession(sessionId) {
 function deleteSession(sessionId) {
   const filepath = getSessionFilePath(sessionId);
   if (fs.existsSync(filepath)) {
-    fs.unlinkSync(filepath);
+    const parent = process.platform === "linux" ? openParent(filepath) : null;
+    try { fs.unlinkSync(parent ? parent.anchored : filepath); } finally { if (parent) fs.closeSync(parent.fd); }
     return true;
   }
   return false;

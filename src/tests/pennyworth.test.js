@@ -6,6 +6,8 @@ const os = require("os");
 const Module = require("module");
 
 const registeredIpcHandlers = {};
+const trustedFrame = { url: require("url").pathToFileURL(path.resolve(__dirname, "../renderer/index.html")).href };
+const trustedEvent = { senderFrame: trustedFrame, sender: { mainFrame: trustedFrame, isDestroyed: () => false } };
 
 // 1. Mock Electron, child_process, and axios globally before loading any project files
 const originalRequire = Module.prototype.require;
@@ -13,12 +15,13 @@ Module.prototype.require = function(id) {
   if (id === "electron") {
     return {
       app: {
-        getPath: () => os.tmpdir(),
+        getPath: () => fs.realpathSync(os.tmpdir()),
         whenReady: () => Promise.resolve(),
         on: () => {},
         setAppUserModelId: () => {},
       },
       BrowserWindow: {
+        fromWebContents: sender => sender === trustedEvent.sender ? {} : null,
         getFocusedWindow: () => null,
         getAllWindows: () => [],
       },
@@ -353,7 +356,7 @@ test("Persistent Butler Memory Tools", async (t) => {
   }
 });
 
-test("Hermes Agent Cancellation Loop", async (t) => {
+test("Pennyworth Cancellation Loop", async (t) => {
   await t.test("should raise AGENT_STOPPED error when session is cancelled", () => {
     // Cancel the session
     providersModule.cancelCurrentSession();
@@ -453,7 +456,7 @@ test("Bootstrap Local Ollama Installation Flow", async (t) => {
     const showNotificationHandler = registeredIpcHandlers["pennyworth:show-native-notification"];
     assert.ok(showNotificationHandler, "pennyworth:show-native-notification handler should be registered");
 
-    const res = await showNotificationHandler(null, { title: "Test Notification", body: "Test body text" });
+    const res = await showNotificationHandler(trustedEvent, { title: "Test Notification", body: "Test body text" });
     assert.ok(res.ok || res.error);
   });
 });
@@ -529,7 +532,7 @@ test("Screenshot capture handlers", async (t) => {
     const listDisplaysHandler = registeredIpcHandlers["pennyworth:list-displays"];
     assert.ok(listDisplaysHandler, "pennyworth:list-displays handler should be registered");
 
-    const result = await listDisplaysHandler();
+    const result = await listDisplaysHandler(trustedEvent);
     assert.strictEqual(result.ok, true);
     assert.ok(Array.isArray(result.displays));
     assert.strictEqual(result.displays.length, 2);
@@ -545,7 +548,7 @@ test("Screenshot capture handlers", async (t) => {
     const captureScreenHandler = registeredIpcHandlers["pennyworth:capture-screen"];
     assert.ok(captureScreenHandler, "pennyworth:capture-screen handler should be registered");
 
-    const result = await captureScreenHandler(null, { screenId: 1 });
+    const result = await captureScreenHandler(trustedEvent, { screenId: 1 });
     assert.strictEqual(result.ok, true);
     assert.strictEqual(result.dataUri, "data:image/png;base64,mockdisplay1data");
     assert.strictEqual(result.imageDataUrl, "data:image/png;base64,mockdisplay1data");
@@ -554,7 +557,7 @@ test("Screenshot capture handlers", async (t) => {
 
   await t.test("should successfully capture secondary display screenshot", async () => {
     const captureScreenHandler = registeredIpcHandlers["pennyworth:capture-screen"];
-    const result = await captureScreenHandler(null, { screenId: 2 });
+    const result = await captureScreenHandler(trustedEvent, { screenId: 2 });
     assert.strictEqual(result.ok, true);
     assert.strictEqual(result.dataUri, "data:image/png;base64,mockdisplay2data");
     assert.strictEqual(result.imageDataUrl, "data:image/png;base64,mockdisplay2data");
@@ -563,7 +566,7 @@ test("Screenshot capture handlers", async (t) => {
 
   await t.test("should successfully capture by index if display ID mismatch", async () => {
     const captureScreenHandler = registeredIpcHandlers["pennyworth:capture-screen"];
-    const result = await captureScreenHandler(null, { displayKey: "display-1" });
+    const result = await captureScreenHandler(trustedEvent, { displayKey: "display-1" });
     assert.strictEqual(result.ok, true);
     assert.strictEqual(result.dataUri, "data:image/png;base64,mockdisplay2data");
     assert.strictEqual(result.imageDataUrl, "data:image/png;base64,mockdisplay2data");
@@ -579,7 +582,7 @@ test("OpenAI & Gemini Model Discovery & Masked API Key", async (t) => {
     const listOpenAIHandler = registeredIpcHandlers["pennyworth:list-openai-models"];
     assert.ok(listOpenAIHandler, "pennyworth:list-openai-models handler should be registered");
 
-    const res = await listOpenAIHandler(null, { apiKey: "sk-testkey12345" });
+    const res = await listOpenAIHandler(trustedEvent, { apiKey: "sk-testkey12345" });
     assert.strictEqual(res.ok, true);
     assert.ok(Array.isArray(res.models));
     assert.ok(res.models.includes("gpt-4o"));
@@ -590,7 +593,7 @@ test("OpenAI & Gemini Model Discovery & Masked API Key", async (t) => {
     const listGeminiHandler = registeredIpcHandlers["pennyworth:list-gemini-models"];
     assert.ok(listGeminiHandler, "pennyworth:list-gemini-models handler should be registered");
 
-    const res = await listGeminiHandler(null, { apiKey: "AIzaSyTestKey123" });
+    const res = await listGeminiHandler(trustedEvent, { apiKey: "AIzaSyTestKey123" });
     assert.strictEqual(res.ok, true);
     assert.ok(Array.isArray(res.models));
     assert.ok(res.models.includes("gemini-2.0-flash"));
@@ -661,7 +664,7 @@ test("Audio Transcription IPC Handler", async (t) => {
       const { ipcMain } = require("electron");
       const handler = ipcMain._events?.["pennyworth:transcribe-audio"];
       if (handler) {
-        const res = await handler(null, payload);
+        const res = await handler(trustedEvent, payload);
         assert.strictEqual(res.ok, false);
         assert.match(res.error, /API key/i);
       }

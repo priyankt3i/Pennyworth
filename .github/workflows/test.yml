@@ -1,29 +1,54 @@
-name: Node CI
+name: Test and package
 
 on:
   push:
-    branches: [ main, feature/hermes-agent ]
   pull_request:
-    branches: [ main ]
+
+permissions:
+  contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - run: npm audit --audit-level=high
+        if: runner.os == 'Linux'
+      - run: npm test
+        env:
+          NODE_ENV: test
+      - run: npm run pack
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-smoke-build-${{ matrix.os }}
+          path: dist/
+          retention-days: 7
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-        cache: 'npm'
-
-    - name: Install dependencies
-      run: npm install --legacy-peer-deps
-
-    - name: Run unit tests
-      run: npm test
-      env:
-        NODE_ENV: test
+  linux-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap xvfb
+      # Test runner only: allow user namespaces so isolation is exercised rather
+      # than skipped. This is not an installation instruction for user machines.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: npm ci --legacy-peer-deps
+      - run: node --test src/tests/sandbox-integration.test.js
+        env:
+          PENNYWORTH_REQUIRE_SANDBOX_TEST: '1'
+      - run: xvfb-run -a npm run test:electron

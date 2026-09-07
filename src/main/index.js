@@ -47,6 +47,7 @@ function createWindow() {
       preload: path.join(__dirname, "../preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
 
@@ -55,6 +56,12 @@ function createWindow() {
     mainWindow.removeMenu();
   }
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", event => event.preventDefault());
+  mainWindow.webContents.on("will-attach-webview", event => event.preventDefault());
+  mainWindow.webContents.session.setPermissionRequestHandler((contents, permission, callback) => {
+    callback(contents === mainWindow.webContents && permission === "media" && contents.getURL() === require("./ipc-security").rendererUrl);
+  });
   mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   
   mainWindow.once("ready-to-show", () => {
@@ -67,6 +74,7 @@ function createWindow() {
       mainWindow.hide();
     }
   });
+  return mainWindow;
 }
 
 function toggleWindow() {
@@ -159,3 +167,5 @@ if (process.env.NODE_ENV !== "test") {
     }
   });
 }
+
+module.exports = { createWindow };

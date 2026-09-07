@@ -2,7 +2,10 @@ const fs = require("fs");
 const { getExecutionContext } = require("../execution-context");
 const path = require("path");
 const os = require("os");
-const { exec, execSync } = require("child_process");
+const { execSync } = require("child_process");
+const crypto = require("crypto");
+const { checkedPath, openRegularFile, openParent } = require("../safe-path");
+const { executionPlan, runProcess, checkSignal } = require("../execution-runner");
 
 let dialog, BrowserWindow, nativeImage;
 try {
@@ -18,7 +21,7 @@ function riskIcon(title) {
   if (!nativeImage?.createFromBitmap) return undefined;
   const high = /HIGH|CRITICAL|Sensitive|WARNING/.test(title);
   const pixels = Buffer.alloc(32 * 32 * 4);
-  const [r, g, b] = high ? [220, 38, 38] : [217, 119, 6];
+  const [r, g, b] = high ? [220, 38, 38] : /LOW/.test(title) ? [22, 163, 74] : [217, 119, 6];
   for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
     const offset = (y * 32 + x) * 4;
     if ((x - 15.5) ** 2 + (y - 15.5) ** 2 <= 225) {
@@ -30,8 +33,7 @@ function riskIcon(title) {
 
 async function requestUserApproval(title, message, detail) {
   if (!dialog || !BrowserWindow) {
-    // In headless or test environments without UI, default to DENY for security (except when explicitly allowed in tests)
-    return process.env.NODE_ENV === "test";
+    return false; // Missing approval UI always fails closed, including tests.
   }
 
   try {
@@ -65,9 +67,8 @@ function classifyCommandAccess(command) {
   return "MAY WRITE (effects not verified)";
 }
 
-function analyzeCommandConsequences(command, risk) {
+function analyzeCommandConsequences(command, risk, execution = getExecutionContext().scope) {
   const cmd = command.trim();
-  const lower = cmd.toLowerCase();
   const consequences = [];
 
   if (/\bsudo\b/i.test(cmd) || /\bpkexec\b/i.test(cmd)) {
@@ -99,7 +100,7 @@ function analyzeCommandConsequences(command, risk) {
   return [
     `Command: ${cmd}`,
     `Access: ${classifyCommandAccess(command)}`,
-    `Execution: ${getExecutionContext().scope}`,
+    `Execution: ${execution}`,
     `Risk Assessment: ${risk.category} (Score: ${risk.score}/4)`,
     `Reason: ${risk.reason}`,
     "",
@@ -123,13 +124,14 @@ function isSensitivePath(filepath) {
 
 function tryRunCommand(cmd) {
   try {
-    return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true }).trim();
+    return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 5000 }).trim();
   } catch (error) {
     return `Failed to fetch info: ${error.message}`;
   }
 }
 
 function assessCommandRisk(command) {
+  if (typeof command !== "string" || !command.trim() || command.length > 16000 || command.includes("\0")) throw new Error("Invalid command: expected 1–16000 characters without NUL.");
   const normalized = command.trim().toLowerCase();
   
   // Strip quotes to prevent quote-splitting evasion: id_r"s"a -> id_rsa
@@ -140,6 +142,7 @@ function assessCommandRisk(command) {
   
   // 1. Critical Blocklist (Risk 4 - Blocked)
   const blockedPatterns = [
+    /\brm\s+(?:(?:--[\w-]+|-[a-z]+)\s+)+(?:\/|~)(?:\s|$|\*)/i,
     /rm\s+-rf\s+\//,
     /rm\s+-rf\s+\\\*/,
     /del\s+\/s\s+\/f\s+\/q\s+c:/,
@@ -201,7 +204,9 @@ function assessCommandRisk(command) {
     /systemctl\s+(enable|disable|stop|mask)/i,
     /registry\s+/i,
     /reg\s+(add|delete|copy|load|restore)/i,
-    /rm\s+-rf/i,
+    /\b(rm|unlink|rmdir|chmod|chown|pkill|kill|swapoff)\b/i,
+    /[;&|><`$\n\r]/,
+    /\b(python[0-9.]*|node|perl|ruby|bash|sh|powershell|pwsh)\s+(?:-[ce]|-command)\b/i,
     /del\s+/i,
     /netsh\s+/i,
     /iptables\s+/i,
@@ -254,7 +259,7 @@ function assessCommandRisk(command) {
     return normalized === prefix || normalized.startsWith(prefix + " ");
   });
 
-  if (matchesLowRisk && classifyCommandAccess(command) === "READ") {
+  if (matchesLowRisk && ["git status", "git diff", "git log", "df -h", "free -h", "uname -a", "hostname", "whoami", "pwd", "ps aux"].includes(normalized)) {
     return { score: 1, category: "LOW_RISK_ALLOWLIST", reason: "Read-only query of git status, system versions, disk space, or process lists." };
   }
 
@@ -262,113 +267,116 @@ function assessCommandRisk(command) {
   return { score: 2, category: "MEDIUM_RISK", reason: "General execution query (e.g. package installers or directory scans)." };
 }
 
-async function executeSystemCommand(command) {
-  const risk = assessCommandRisk(command);
-  
-  if (risk.score === 4) {
-    return `🔴 CRITICAL RISK (4/4) — SECURITY_BLOCKED: Command was blocked by Pennyworth's Security Guard.\nReason: ${risk.reason}\nAction: Please execute this command manually in your own terminal if it is safe.`;
-  }
-
-  let approved = false;
-  const consequenceDetail = analyzeCommandConsequences(command, risk);
-  const execution = getExecutionContext();
-
-  if (risk.score === 1) {
-    approved = true;
-    console.log(`Auto-approved low-risk command: ${command}`);
-  } else if (risk.score === 3) {
-    approved = await requestUserApproval(
-      "🔴 HIGH RISK — Command Approval",
-      `🔴 HIGH RISK (3/4) · ${classifyCommandAccess(command)}`,
-      consequenceDetail
-    );
-  } else {
-    approved = await requestUserApproval(
-      "🟠 MEDIUM RISK — Command Approval",
-      `🟠 MEDIUM RISK (2/4) · ${classifyCommandAccess(command)}`,
-      consequenceDetail
-    );
-  }
-
-  if (!approved) {
-    return "COMMAND_EXECUTION_DENIED: The user denied permission to run this command.";
-  }
-
-  return new Promise((resolve) => {
-    exec(command, { timeout: 45000, maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
-      let output = "";
-      if (stdout) {
-        output += stdout;
-      }
-      if (stderr) {
-        output += `\n--- STDERR ---\n${stderr}\n`;
-      }
-      if (error) {
-        output += `--- ERROR ---\nExit Code: ${error.code}\n${error.message}\n`;
-      }
-      resolve(`Execution context: ${JSON.stringify(execution)}\nAccess: ${classifyCommandAccess(command)}\n\n${output || "Command executed successfully but returned no output."}`);
-    });
-  });
-}
-
-async function readSystemFile(filepath) {
-  if (isSensitivePath(filepath)) {
+async function executeSystemCommand(command, { target = "sandbox", signal, diagnostic = false } = {}) {
+  checkSignal(signal);
+  const risk = diagnostic ? { score: 2, category: "MEDIUM_RISK", reason: "Fixed read-only diagnostic probes; host output shared with selected provider." } : assessCommandRisk(command);
+  const access = diagnostic ? "READ (fixed diagnostic probes)" : classifyCommandAccess(command);
+  if (risk.score === 4) return "SECURITY_BLOCKED: " + risk.reason;
+  const plan = executionPlan(target);
+  // Even known reads require consent on the host: reading may disclose private
+  // data to the selected provider. Approval is for this exact target and command.
+  const needsApproval = target === "host" || risk.score !== 1;
+  if (needsApproval) {
+    const high = risk.score >= 3;
+    const label = high ? "HIGH" : risk.score === 1 ? "LOW" : "MEDIUM";
     const approved = await requestUserApproval(
-      "Read Sensitive File",
-      "Hermes Agent is requesting to read a sensitive system file.",
-      `File path: ${filepath}\n\nWARNING: This file may contain user credentials, keys, or API tokens.`
+      high ? "🔴 HIGH RISK — Command Approval" : risk.score === 1 ? "🟢 LOW RISK — Command Approval" : "🟠 MEDIUM RISK — Command Approval",
+      `${label} RISK · ${access} · ${target.toUpperCase()}`,
+      analyzeCommandConsequences(command, risk, plan.description).replace(`Access: ${classifyCommandAccess(command)}`, `Access: ${access}`) + "\n\nOutput will be sent to your selected AI provider. Approval does not grant future commands permission."
     );
-    if (!approved) {
-      return "FILE_READ_DENIED: The user denied permission to read this sensitive file.";
-    }
+    checkSignal(signal);
+    if (!approved) return "COMMAND_EXECUTION_DENIED: Command was not approved.";
   }
-
-  try {
-    const stats = fs.statSync(filepath);
-    if (stats.isDirectory()) {
-      return `Error: '${filepath}' is a directory, not a file.`;
-    }
-    if (stats.size > 1024 * 1024 * 5) {
-      return `Error: File is too large to read directly (${(stats.size / 1024 / 1024).toFixed(2)} MB).`;
-    }
-    const content = fs.readFileSync(filepath, "utf8");
-    return content || "(Empty file)";
-  } catch (error) {
-    return `Error reading file '${filepath}': ${error.message}`;
-  }
+  checkSignal(signal);
+  return JSON.stringify(await runProcess(plan, command, { signal }), null, 2);
 }
 
-async function writeSystemFile(filepath, content) {
-  const isSensitive = isSensitivePath(filepath);
-  let approved = false;
-
-  if (isSensitive) {
-    approved = await requestUserApproval(
-      "SECURITY WARNING: Write Sensitive System File",
-      "Hermes Agent is requesting to modify a highly sensitive system file or user credentials file.",
-      `File path: ${filepath}\n\nWARNING: Modifying shell profiles, SSH key rings, system hosts, or credentials files can compromise system security or lock you out of your machine.`
-    );
-  } else {
-    approved = await requestUserApproval(
-      "Write System File",
-      "Hermes Agent is requesting to write or overwrite a file on your computer.",
-      `File path: ${filepath}\n\nWARNING: Modifying system files can break applications or alter OS configurations.`
-    );
-  }
-
-  if (!approved) {
-    return "FILE_WRITE_DENIED: The user denied permission to write this file.";
-  }
-
+async function readSystemFile(filepath, { signal } = {}) {
+  checkSignal(signal);
+  let opened;
   try {
-    const dir = path.dirname(filepath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(filepath, content, "utf8");
-    return `Successfully wrote ${content.length} characters to '${filepath}'.`;
+    filepath = checkedPath(filepath);
+    const approved = await requestUserApproval(
+      isSensitivePath(filepath) ? "🔴 Read Sensitive File" : "🟠 Read File",
+      "Pennyworth requests READ access in its local process environment.",
+      `File: ${filepath}\nExecution: ${getExecutionContext().scope}\nContent will be sent to your selected AI provider. This is not a host bridge.`
+    );
+    checkSignal(signal);
+    if (!approved) return "FILE_READ_DENIED: File read was not approved.";
+    opened = openRegularFile(filepath);
+    if (opened.stat.size > 5 * 1024 * 1024) throw new Error("File exceeds the 5 MB limit.");
+    const content = fs.readFileSync(opened.fd, "utf8");
+    return JSON.stringify({ execution: getExecutionContext(), filepath, readAt: new Date().toISOString(), content });
   } catch (error) {
-    return `Error writing file '${filepath}': ${error.message}`;
+    if (error.code === "AGENT_STOPPED") throw error;
+    return `FILE_READ_ERROR: ${error.message}`;
+  } finally { if (opened) fs.closeSync(opened.fd); }
+}
+
+async function writeSystemFile(filepath, content, { signal } = {}) {
+  checkSignal(signal);
+  let temporary, parent;
+  try {
+    filepath = checkedPath(filepath);
+    parent = openParent(filepath);
+    const anchored = parent.anchored;
+    if (typeof content !== "string" || Buffer.byteLength(content) > 100000) throw new Error("File writes require text of at most 100 KB for review.");
+    const dir = path.dirname(filepath);
+    if (!fs.statSync(checkedPath(dir)).isDirectory()) throw new Error("Parent directory must already exist.");
+    const before = fs.existsSync(anchored) ? fs.lstatSync(anchored) : null;
+    if (before && (!before.isFile() || before.nlink !== 1)) throw new Error("Only regular files with a single link may be replaced.");
+    if (before && (before.size > 5 * 1024 * 1024 || (before.mode & 0o7000))) throw new Error("Existing file is too large or has privileged permission bits.");
+    const digest = crypto.createHash("sha256").update(content).digest("hex");
+    const approved = await requestUserApproval(
+      isSensitivePath(filepath) ? "🔴 HIGH RISK — Write Sensitive File" : "🟠 Write File",
+      "Pennyworth requests WRITE access in its local process environment.",
+      `File: ${filepath}\nExecution: ${getExecutionContext().scope}\nAction: ${before ? "Replace (original backup retained)" : "Create"}\nSHA-256: ${digest}\n\nComplete proposed content:\n${content}`
+    );
+    checkSignal(signal);
+    if (!approved) return "FILE_WRITE_DENIED: File write was not approved.";
+    checkedPath(filepath);
+    const after = fs.existsSync(anchored) ? fs.lstatSync(anchored) : null;
+    if (Boolean(before) !== Boolean(after) || (before && (before.ino !== after.ino || before.dev !== after.dev || before.mtimeMs !== after.mtimeMs || before.size !== after.size))) throw new Error("File changed during approval; request a fresh approval.");
+    let backup = null;
+    if (before) {
+      backup = filepath + `.pennyworth-backup-${crypto.randomUUID()}`;
+      const source = fs.openSync(anchored, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      let backupFd;
+      try {
+        backupFd = fs.openSync(`/proc/self/fd/${parent.fd}/${path.basename(backup)}`, "wx", 0o600);
+        const original = fs.readFileSync(source);
+        fs.writeFileSync(backupFd, original);
+        fs.fsyncSync(backupFd);
+      } finally { fs.closeSync(source); if (backupFd !== undefined) fs.closeSync(backupFd); }
+    }
+    temporary = `/proc/self/fd/${parent.fd}/.pennyworth-${crypto.randomUUID()}.tmp`;
+    const fd = fs.openSync(temporary, "wx", before ? before.mode & 0o777 : 0o600);
+    try {
+      fs.writeFileSync(fd, content);
+      if (before) { fs.fchownSync(fd, before.uid, before.gid); fs.fchmodSync(fd, before.mode & 0o777); }
+      fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
+    checkSignal(signal);
+    checkedPath(filepath);
+    const currentParent = fs.statSync(dir);
+    const heldParent = fs.fstatSync(parent.fd);
+    if (currentParent.ino !== heldParent.ino || currentParent.dev !== heldParent.dev) throw new Error("Parent directory changed during approval.");
+    if (before) {
+      const latest = fs.lstatSync(anchored);
+      if (latest.ino !== before.ino || latest.mtimeMs !== before.mtimeMs || latest.size !== before.size) throw new Error("File changed before replacement.");
+      fs.renameSync(temporary, anchored);
+    } else {
+      fs.linkSync(temporary, anchored); // Atomic create; never overwrite a raced-in file.
+      fs.unlinkSync(temporary);
+    }
+    temporary = null;
+    return JSON.stringify({ success: true, filepath, backup, sha256: digest, execution: getExecutionContext(), writtenAt: new Date().toISOString() });
+  } catch (error) {
+    if (error.code === "AGENT_STOPPED") throw error;
+    return `FILE_WRITE_ERROR: ${error.message}`;
+  } finally {
+    if (temporary) { try { fs.unlinkSync(temporary); } catch (_) {} }
+    if (parent) fs.closeSync(parent.fd);
   }
 }
 
@@ -424,6 +432,7 @@ function getSystemStatus(aspect = "all") {
 module.exports = {
   classifyCommandAccess,
   analyzeCommandConsequences,
+  requestUserApproval,
   assessCommandRisk,
   executeSystemCommand,
   readSystemFile,

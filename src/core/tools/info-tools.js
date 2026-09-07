@@ -85,7 +85,7 @@ function runSmallTalkTool(question) {
     return {
       handled: true,
       tool: "small_talk",
-      reply: "Good day. Hermes at your service. What can I help you solve?",
+      reply: "Good day. Pennyworth at your service. What can I help you solve?",
     };
   }
 

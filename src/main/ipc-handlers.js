@@ -1,4 +1,5 @@
-const { ipcMain, desktopCapturer, safeStorage } = require("electron");
+const { desktopCapturer } = require("electron");
+const { guardedIpcMain: ipcMain } = require("./ipc-security");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -748,6 +749,7 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
 
   ipcMain.handle("pennyworth:ask", async (_event, payload) => {
     try {
+      if (payload?.sessionId !== undefined) getSessionFilePath(payload.sessionId);
       const providerConfig = getProviderState();
       const agentContext = getAgentContextState();
       const state = runtimeState();
@@ -777,6 +779,7 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
 
       const result = await askWithFailover(activeConfig, {
         userPrompt,
+        sessionId: payload?.sessionId,
         history,
         systemContext,
         agentContext,
@@ -892,7 +895,7 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
         updatedAt: new Date().toISOString(),
         messages: [],
       };
-      fs.writeFileSync(getSessionFilePath(sessionId), JSON.stringify(session, null, 2), "utf8");
+      fs.writeFileSync(getSessionFilePath(sessionId), JSON.stringify(session, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
       return { ok: true, sessionId, session };
     } catch (error) {
       return { ok: false, error: error.message };

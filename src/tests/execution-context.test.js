@@ -30,6 +30,9 @@ test("approval detail includes risk, access and execution scope", () => {
   assert.match(detail, /Risk Assessment:/);
 });
 
-test("successful tool output includes execution provenance", async () => {
-  assert.match(await executeSystemCommand("pwd"), /Execution context:.*host access unverified|Execution context:.*sandbox\/container/);
+test("unavailable sandbox never falls back to host", () => {
+  const { executionPlan } = require("../core/execution-runner");
+  const attempts = [];
+  assert.throws(() => executionPlan("sandbox", { platform: "linux", probe: (exe, args) => { attempts.push(exe); return { status: 1 }; } }), /SANDBOX_UNAVAILABLE/);
+  assert.deepEqual(attempts, ["/usr/bin/bwrap"]);
 });

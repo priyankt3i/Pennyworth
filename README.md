@@ -1,6 +1,6 @@
 # Pennyworth
 
-Pennyworth is a cross-platform desktop AI assistant (Electron) designed to feel like a true system copilot: always available from the tray, context-aware about the host, and capable of using tools to help troubleshoot, manage, and configure your system. It includes **Hermes**, an agentic system handler with command execution sandboxing, command risk scoring, and persistent memory.
+Pennyworth is a cross-platform desktop AI assistant (Electron) designed to feel like a true system copilot: always available from the tray, context-aware about the host, and capable of using tools to help troubleshoot, manage, and configure your system. Its agent supports explicit execution targets, command approvals, diagnostic probes, and persistent memory. This is a development build; see [execution safety and release gates](docs/EXECUTION-SAFETY.md).
 
 ## Vision
 
@@ -29,7 +29,7 @@ Pennyworth is a cross-platform desktop AI assistant (Electron) designed to feel 
 - **40+ Pre-configured Profiles:** Arch family (CachyOS, EndeavourOS, Manjaro, SteamOS, Garuda, Artix, BlackArch), Debian/Ubuntu family (Mint, Pop!_OS, Kali, Zorin, MX, Raspberry Pi, Parrot, elementary, Deepin, Bodhi, Tails), Fedora/RHEL family (Workstation, RHEL, AlmaLinux, Rocky, Nobara, CentOS, Amazon Linux, Asahi), openSUSE, Gentoo, independent distros (NixOS, Solus, Void, Alpine, Clear, Slackware, Qubes), BSD (FreeBSD, OpenBSD), Windows (10, 11, Server 2025), macOS (Sequoia, Tahoe), ChromeOS, Haiku
 - System fingerprint context (kernel, desktop, package-manager presence, etc.)
 
-### Security Hardening (PRs #4, #6, #8 — Complete)
+### Security controls (release validation required)
 - **Electron safeStorage Vault:**
   - Built-in OS keychain integration (DPAPI on Windows, Keychain on macOS, Libsecret on Linux)
   - PBKDF2 fallback with 100,000 iterations + random per-install salting for offline environments
@@ -41,20 +41,20 @@ Pennyworth is a cross-platform desktop AI assistant (Electron) designed to feel 
   - Eliminates blanket `NODE_TLS_REJECT_UNAUTHORIZED` bypass
   - Enforced across all health checks and provider connectivity (PR #8) ✓
 
-- **Command Security Sandbox (Risk Scoring Model):**
-  - **Score 1 (Low Risk):** Read-only commands (e.g. `git status`, `df -h`, `ollama list`) → auto-approved
+- **Command risk scoring and isolation:**
+  - **Score 1 (Low Risk):** Exact low-risk queries → auto-approved only inside the isolated sandbox; host commands always require approval
   - **Score 2 (Medium Risk):** Standard actions (e.g. package management) → user approval popup
   - **Score 3 (High Risk):** Service/registry/network modifications → prominent warning window
   - **Score 4 (Critical Risk - Blocked):** Destructive commands, download-and-execute pipes → automatically blocked
-  - **Sensitive Path Filter:** Blocks access to SSH keys (`id_rsa`, `id_ed25519`, `authorized_keys`), shell startup files (`.bashrc`, `.zshrc`, `.profile`), credential files (`.env`, `.kube`, `.aws`), registry hives
+  - **Sensitive Path Filter:** Known credential patterns receive additional warnings or command blocking; all direct file access requires approval.
   - **Obfuscation Defenses (PR #6):**
     - Quote-stripping pre-processing (defeats `cat ~/.s"s"h/id_r's'a` bypasses)
     - Variable substitution scanning (detects `a=.env; cat $a` indirection)
-    - Folder boundary scanning (blocks any command accessing `.ssh`, `.aws`, `.kube` folders)
+    - Known credential-path pattern detection (not a complete shell security boundary)
   - **Windows/PowerShell Parity:** Blocks `Remove-Item -Path C:\\ -Recurse -Force`, `Clear-Disk`, `Format-Disk`, credential extraction (`reg save hklm\sam`), service manipulation, firewall rule disabling
 
 - **Elevated Prompt for Sensitive Operations:**
-  - Electron native `dialog.showMessageBoxSync()` for approval gates
+  - Electron native `dialog.showMessageBox()` for approval gates
   - Risk descriptions and privilege implications displayed before execution
 
 ### Provider Layer (Multi-Model + Tool-Calling)
@@ -70,7 +70,7 @@ Pennyworth is a cross-platform desktop AI assistant (Electron) designed to feel 
 - **Provider Failover Routing:** Attempts all enabled providers in order, falls back gracefully
 - **No-Provider Fallback:** Icon and guided status/help messaging when all providers disabled
 
-### Agentic Tool Use (Hermes System Handler)
+### Agentic Tool Use (Pennyworth System Handler)
 - **Information Tools:**
   - `get_current_datetime`: System clock + timezone
   - `get_weather`: Open-Meteo integration with optional IP-location permission
@@ -85,7 +85,7 @@ Pennyworth is a cross-platform desktop AI assistant (Electron) designed to feel 
 - **Memory & Knowledge Tools:**
   - `remember_fact`: Persistent butler memory (saves to `pennyworth-memory.json`)
   - `recall_facts`: Fuzzy search over learned facts
-  - Memories automatically injected into Hermes' system prompt on boot
+  - Memories automatically injected into Pennyworth' system prompt on boot
 
 ### Retrieval-Augmented Generation (RAG)
 - **Local Docs Retrieval:** Lexical keyword scoring from `data/docs/<profile>` directory
@@ -106,7 +106,7 @@ Pennyworth is a cross-platform desktop AI assistant (Electron) designed to feel 
 
 - **Real-Time Feedback:**
   - Developer trace panel for provider/tool execution visibility
-  - Live status bar updates as trace events fire (exact actions Hermes is performing)
+  - Live status bar updates as trace events fire (exact actions Pennyworth is performing)
   - Failure messages surfaced in UI instead of silent errors
 
 - **Toast Notifications:**
@@ -118,7 +118,7 @@ Pennyworth is a cross-platform desktop AI assistant (Electron) designed to feel 
 
 - **Dynamic Stop Button:**
   - Red Stop button appears when busy (replaces Send)
-  - Cancels tool-calling loop execution immediately
+  - Cancels pending tool work and terminates supported running command process groups
   - Raises `AGENT_STOPPED` error at next step
 
 ### Testing & CI/CD
@@ -150,7 +150,7 @@ Pennyworth is a cross-platform desktop AI assistant (Electron) designed to feel 
 2. ✅ Docs ingestion + chunking quality for distro knowledge (DONE — lexical RAG, crawl-docs.js)
 3. ✅ Cross-platform packaging reliability and first-run diagnostics (DONE — bootstrap.js, health checks)
 4. ✅ Provider/model readiness checks before chat send (DONE — health.js, provider state validation)
-5. ✅ Enterprise security: safeStorage vault, PBKDF2 fallback, CA cert support (DONE — PR #4, #6, #8)
+5. Credential storage: OS keychain, passphrase vault fallback and custom CA support; production validation remains required.
 
 ### Phase 2: Real Copilot Experience
 1. Full voice chat:
@@ -190,7 +190,7 @@ src/
     sessions.js              # Chat history persistence
     provider-config.js       # Provider state management
     health.js                # LLM connection status checks
-    bootstrap.js             # Installer helpers (winget, curl)
+    bootstrap.js             # Approved service startup; no shell installer fallback
     profiles.js              # System detection & distro profiling
     ipc-handlers.js          # Electron IPC channel bindings
   
@@ -329,20 +329,13 @@ If you're behind a corporate SSL-intercepting firewall:
 
 **Note:** This replaces the old blanket `NODE_TLS_REJECT_UNAUTHORIZED` bypass. All health checks and provider connectivity now enforce the custom CA agent.
 
-### Sensitive Path Protection
-Hermes automatically blocks access to:
-- SSH keys (`~/.ssh/id_rsa`, `id_ed25519`, `authorized_keys`)
-- Credential files (`~/.env`, `~/.kube/config`, `~/.aws/credentials`)
-- Shell startup files (`~/.bashrc`, `~/.zshrc`, `~/.profile`)
-- Windows registry credential hives (`HKLM\sam`, etc.)
-- Command execution of privileged operations without approval
+### File and command protection
 
-### Obfuscation & Bypass Defense
-The command security system detects and blocks:
-- Quote-splitting evasion (`cat ~/.s"s"h/id_r's'a` → blocked as `~/.ssh/id_rsa`)
-- Variable substitution indirection (`a=.env; cat $a` → blocked)
-- Directory-level credential folder access (any command touching `.ssh`, `.aws`, `.kube`)
-- Windows PowerShell destructive operations (recursive deletes, partition wipes, service disables, registry extraction)
+All file reads and writes require approval. Symlink aliases are rejected. Reviewed
+Linux writes retain a backup and use descriptor-relative file access. Known
+critical command patterns are blocked, but regex matching is not a complete shell
+security policy. Every host command requires approval, and unsupported execution
+targets fail closed. See [the detailed safety model](docs/EXECUTION-SAFETY.md).
 
 ## Notes
 
@@ -353,74 +346,24 @@ The command security system detects and blocks:
 - All system-changing operations require explicit user approval via native OS dialogs.
 - Trace logs are visible in the developer panel for debugging provider/tool execution.
 
-## Hermes Agent: Agentic PC & Linux Handler
+## Pennyworth agent execution
 
-**Hermes** is Pennyworth's core agentic system handler — a safe remediation copilot that allows your selected LLM to directly interact with, troubleshoot, and configure your host operating system while respecting strict security boundaries.
+The assistant uses the Pennyworth name consistently. Provider attribution appears
+as “Pennyworth via Gemini” or the selected provider.
 
-### Core Capabilities
+- `get_execution_capabilities`: probe supported sandbox and host targets.
+- `diagnose_system`: approved, fixed host diagnostics with session verification.
+- `execute_system_command`: explicit sandbox/host target, risk/access labels and approval.
+- `read_system_file` / `write_system_file`: approved local filesystem operations.
+- `get_system_status`: local process-view metrics, labeled with execution context.
+- `remember_fact` / `recall_facts`: persistent facts, treated as untrusted evidence.
 
-**Host System Identification:**
-- Automatically reads platform type, distro profiles, architecture, kernel version, hardware resources, and package manager presence (`pacman`, `yay`, `paru`, `apt`, `dnf`, `brew`, etc.)
-- Surfaces this context to the LLM so it can make OS-specific recommendations
+OpenAI, Ollama and Gemini share one tool-schema source. Stop cancels active command
+process groups and prevents pending approvals from starting new commands. Completed
+changes are not rolled back automatically, and detached/privileged services have
+separate lifecycles. Provider failures do not replay tool attempts on another provider.
 
-**System Execution & Configuration Tools:**
-- `execute_system_command`: Runs shell commands with risk scoring (Low/Medium/High/Blocked)
-- `read_system_file`: Inspects configs, logs, service files with sensitive path filtering
-- `write_system_file`: Generates and updates scripts and configuration files with approval gates
-- `get_system_status`: Queries live CPU, memory, disk, processes, systemd services, network adapters
-
-**Persistent Butler Memory:**
-- `remember_fact`: Learns and stores facts about the system/user on disk (`pennyworth-memory.json`)
-- `recall_facts`: Fuzzy-searches prior learned facts to inform future recommendations
-
-### Safety & Approval Gate
-
-**Native Dialog Approvals:**
-- Any invocation of `execute_system_command` or `write_system_file` triggers Electron's native `dialog.showMessageBoxSync()` to display the proposed action and risk implications
-- User explicitly approves before execution (no silent background changes)
-
-**Sensitive Path Filter:**
-- Attempts to read SSH keys, private credentials, or shell histories are automatically intercepted and blocked
-- Write attempts to sensitive paths trigger elevated warning prompts
-- Obfuscated bypass attempts (quote-splitting, variable substitution, folder-level access) are detected and blocked
-
-**Command Risk Scoring:**
-- Low-risk read commands auto-approved
-- Medium-risk package management prompts for approval
-- High-risk service/registry modifications show prominent warnings
-- Critical-risk destructive commands (rm -rf /, format, add admin users) automatically blocked
-
-### Model Tool Calling Support
-
-All three providers support native tool-calling out of the box:
-- **Ollama (Local Models):** OpenAI-compatible tool specifications (llama3.2, qwen2.5-coder, etc.)
-- **OpenAI (Cloud):** Tool Definitions
-- **Gemini (Cloud):** Function Declarations
-
-Hermes intelligently selects the appropriate tool-calling flow based on the active provider.
-
-### Advanced Capabilities & UI Refinements
-
-**Dynamic Stop Button:**
-- Chat button morphs into a red **Stop** button when Hermes is busy
-- Clicking it halts execution immediately by raising an `AGENT_STOPPED` error
-
-**Real-Time Activity Streaming:**
-- Status bar updates dynamically as trace events fire, showing exact action (e.g., "Executing: sudo pacman -Syu")
-- Trace panel logs full tool execution history for debugging
-
-**Toast Notifications + History Modal:**
-- Floating toast cards display alerts, warnings, and status updates
-- Bell icon (🔔) with unread badge in header shows notification history
-- Color-coded timeline with timestamps for all system events
-- Clear History button to reset logs
-
-**Enterprise-Grade Credentials Fallback:**
-- Integrates secure fallback key management vault
-- If Electron's `safeStorage` fails to load (headless/minimal Linux), falls back to local PBKDF2 encryption
-- No credentials ever stored in plaintext
-
-**GitHub Actions CI Pipeline:**
-- `.github/workflows/test.yml` runs headless unit tests on Node v22
-- Triggered on every push to `main` and all PR merge targets
-- 29 tests validate command security, vault ops, provider health, session management
+The native Linux and Flatpak execution paths require platform testing before public
+release. Other host targets and non-Linux direct writes fail closed. See
+[execution safety and release validation](docs/EXECUTION-SAFETY.md) for restrictions,
+CI checks and remaining release gates.

@@ -721,7 +721,7 @@ async function init() {
     renderToolTrace(state.lastToolTrace, event.provider);
 
     if (event.stage === "model_tool_request") {
-      setStatus(`Hermes requesting: ${event.tool}...`);
+      setStatus(`Pennyworth requesting: ${event.tool}...`);
     } else if (event.stage === "tool_exec_start") {
       setStatus(`Executing tool: ${event.tool}...`);
     } else if (event.stage === "tool_exec_result") {
@@ -729,7 +729,7 @@ async function init() {
     } else if (event.stage === "tool_exec_error") {
       setStatus(`Tool error: ${event.tool} failed.`, "error");
     } else if (event.stage === "provider_attempt") {
-      setStatus("Hermes is thinking...");
+      setStatus("Pennyworth is thinking...");
     } else if (event.stage === "final_response") {
       setStatus("Ready");
     }

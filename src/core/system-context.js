@@ -13,6 +13,7 @@ function tryExec(command) {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      timeout: 5000,
     }).trim();
     return output || "unknown";
   } catch (error) {
@@ -26,12 +27,7 @@ function tryExec(command) {
  */
 function commandExists(binary) {
   const lookup = process.platform === "win32" ? `where ${binary}` : `command -v ${binary}`;
-  let exists = tryExec(lookup) !== "unknown";
-  if (!exists && process.platform === "linux") {
-    // Check host binaries if running inside Flatpak sandbox
-    exists = tryExec(`flatpak-spawn --host command -v ${binary}`) !== "unknown";
-  }
-  return exists;
+  return tryExec(lookup) !== "unknown";
 }
 
 /**
@@ -266,6 +262,7 @@ function buildSystemContext() {
       memoryGb: Number((os.totalmem() / 1024 / 1024 / 1024).toFixed(2)),
       gpu: resolveGpu(platform),
     },
+    packageManagerScope: "local process environment",
     packageManagersPresent: resolvePackageManagers(platform),
   };
 }

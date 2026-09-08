@@ -186,14 +186,14 @@
             <label for="tokenSaverMode">Enable Token Saver Mode (Concise AI Responses)</label>
             <input id="tokenSaverMode" type="checkbox" />
 
-            <label for="maxToolSteps">Maximum Tool Loop Steps</label>
+            <label for="maxToolSteps">Maximum Tool Rounds</label>
             <input
               id="maxToolSteps"
               type="number"
               min="1"
               max="50"
               placeholder="10"
-              title="Maximum number of tool execution steps allowed per query (1-50)"
+              title="Maximum tool rounds per query (1–50); a round can include multiple calls. One final summary request follows when the limit is reached."
             />
 
             <label for="themeSelect">UI Theme</label>

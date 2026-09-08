@@ -842,7 +842,7 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
 
       let saveError = null;
       try {
-        savedSession = await historyStore.finish({ sessionId: payload.sessionId, requestId: pendingRequest.requestId, reply: result.reply, provider: result.provider });
+        savedSession = await historyStore.finish({ sessionId: payload.sessionId, requestId: pendingRequest.requestId, reply: result.reply, provider: result.provider, status: result.outcome === "incomplete" ? "incomplete" : "complete" });
         pendingRequest = null;
         scheduleAutomaticTitle(payload.sessionId, _event.sender, result.provider, activeConfig);
       } catch (error) {
@@ -856,6 +856,7 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
         session: savedSession,
         saveError,
         provider: result.provider,
+        outcome: result.outcome || "complete",
         reply: result.reply,
         toolTrace: result.toolTrace,
         docsUsed,
@@ -865,10 +866,11 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
       if (pendingRequest) {
         try {
           savedSession = await historyStore.finish({ sessionId: payload.sessionId, requestId: pendingRequest.requestId,
-            status: /AGENT_STOPPED|ERR_CANCELED/.test(`${error.code} ${error.message}`) ? "cancelled" : "failed" });
+            status: /AGENT_STOPPED|ERR_CANCELED/.test(`${error.code} ${error.message}`) ? "cancelled" : "failed",
+            report: error.recoveryReport || null });
         } catch (saveFailure) { saveError = `Could not save request status: ${saveFailure.message}`; }
       }
-      return { ok: false, error: error.message, session: savedSession, saveError };
+      return { ok: false, error: error.message, recoveryReport: error.recoveryReport, session: savedSession, saveError };
     } finally {
       if (runState && conversationRuns.get(payload?.sessionId) === runState) conversationRuns.delete(payload.sessionId);
     }

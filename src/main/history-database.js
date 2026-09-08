@@ -140,22 +140,27 @@ function openHistory(root) {
       required(sessionId); validText(question);
       return transaction(() => {
         if (db.prepare("SELECT 1 FROM messages WHERE sessionId=? AND status='pending'").get(sessionId)) throw new Error("A request is already running for this conversation.");
-        const history = db.prepare("SELECT role,content FROM messages WHERE sessionId=? AND status='complete' ORDER BY seq DESC LIMIT 8").all(sessionId).reverse();
+        const history = db.prepare("SELECT role,content FROM messages WHERE sessionId=? AND (status IN ('complete','incomplete') OR (role='assistant' AND status='cancelled')) ORDER BY seq DESC LIMIT 8").all(sessionId).reverse();
         const requestId = randomUUID();
         db.prepare("INSERT INTO messages(sessionId,role,content,status,requestId) VALUES(?,'user',?,'pending',?)").run(sessionId, question, requestId);
         db.prepare("UPDATE sessions SET updatedAt=? WHERE id=?").run(new Date().toISOString(), sessionId);
         return { requestId, history, session: metadata(sessionId) };
       });
     },
-    finish({ sessionId, requestId, reply, provider, status = "complete" }) {
+    finish({ sessionId, requestId, reply, provider, status = "complete", report = null }) {
       validId(sessionId);
-      if (!["complete", "failed", "cancelled"].includes(status)) throw new Error("Invalid request status.");
-      if (status === "complete") validText(reply);
+      if (!["complete", "incomplete", "failed", "cancelled"].includes(status)) throw new Error("Invalid request status.");
+      const hasReply = status === "complete" || status === "incomplete";
+      if (hasReply) validText(reply);
+      if (report !== null) validText(report);
       return transaction(() => {
         const request = db.prepare("SELECT 1 FROM messages WHERE sessionId=? AND requestId=? AND status='pending'").get(sessionId, requestId);
         if (!request) throw new Error("Pending conversation request not found.");
-        db.prepare("UPDATE messages SET status=? WHERE requestId=?").run(status, requestId);
-        if (status === "complete") db.prepare("INSERT INTO messages(sessionId,role,content,requestId) VALUES(?,'assistant',?,?)").run(sessionId, reply, requestId);
+        db.prepare("UPDATE messages SET status=? WHERE requestId=?").run(hasReply ? "complete" : status, requestId);
+        if (hasReply || report !== null) {
+          db.prepare("INSERT INTO messages(sessionId,role,content,status,requestId) VALUES(?,'assistant',?,?,?)")
+            .run(sessionId, hasReply ? reply : report, status, requestId);
+        }
         db.prepare("UPDATE sessions SET updatedAt=?,titleProvider=COALESCE(titleProvider,?) WHERE id=?").run(new Date().toISOString(), provider || null, sessionId);
         return metadata(sessionId);
       });

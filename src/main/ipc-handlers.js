@@ -14,6 +14,12 @@ const { listOllamaModels, listOpenAIModels, listGeminiModels, invalidateProvider
 const { runtimeState, getAgentContextState } = require("./profiles");
 const { transcribeLocalPcm, terminateWorker } = require("./local-whisper");
 
+function transcribeForSender(samples, sender) {
+  return transcribeLocalPcm(samples, { onStatus: stage => {
+    if (sender && !sender.isDestroyed()) sender.send("pennyworth:voice-status", { stage });
+  } });
+}
+
 const MAX_STREAM_SAMPLES = 480000; // 30 seconds max window at 16kHz for complete audio capture
 const MIN_TRANSCRIPTION_SAMPLES = 12000; // 0.75 seconds minimum to attempt live whisper
 
@@ -85,7 +91,7 @@ ipcMain.on("pennyworth:audio-stream-chunk", async (event, payload) => {
       isTranscribingStream = true;
       const snapshot = new Float32Array(liveStreamPcmBuffer);
 
-      transcribeLocalPcm(snapshot)
+      transcribeForSender(snapshot, event.sender)
         .then((res) => {
           if (res.ok && res.text && res.text !== lastTranscribedText) {
             lastTranscribedText = res.text;
@@ -122,7 +128,7 @@ ipcMain.on("pennyworth:audio-stream-stop", async (event) => {
       let finalProvider = selectedProvider;
 
       if (selectedProvider === "local") {
-        const localRes = await transcribeLocalPcm(snapshot);
+        const localRes = await transcribeForSender(snapshot, event.sender);
         if (localRes.ok && localRes.text) {
           finalText = localRes.text;
           finalProvider = "Local Whisper (Offline CPU)";
@@ -195,7 +201,7 @@ ipcMain.on("pennyworth:audio-stream-stop", async (event) => {
 
         // Failover to local transcript if cloud did not return
         if (!finalText) {
-          const localRes = await transcribeLocalPcm(snapshot);
+          const localRes = await transcribeForSender(snapshot, event.sender);
           if (localRes.ok && localRes.text) {
             finalText = localRes.text;
             finalProvider = "Local Whisper (Offline CPU)";
@@ -419,7 +425,7 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
       // 1. Explicit Local Whisper
       if (selectedProvider === "local") {
         if (pcmSamples) {
-          const localRes = await transcribeLocalPcm(pcmSamples);
+          const localRes = await transcribeForSender(pcmSamples, _event.sender);
           if (localRes.ok && localRes.text) {
             sendTraceToRenderer({
               stage: "transcription_success",
@@ -550,7 +556,7 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
 
       // 5. Fallback for Auto / Local
       if (pcmSamples) {
-        const localRes = await transcribeLocalPcm(pcmSamples);
+        const localRes = await transcribeForSender(pcmSamples, _event.sender);
         if (localRes.ok && localRes.text) {
           sendTraceToRenderer({
             stage: "transcription_success",

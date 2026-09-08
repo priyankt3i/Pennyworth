@@ -258,3 +258,41 @@ test("desktop diagnostics require matching active graphical session and bus owne
   assert.match(mismatch.stdout, /DESKTOP_SESSION_UNVERIFIED/);
   assert.doesNotMatch(mismatch.stdout, /ANIMATION_QUERY_EXECUTED/);
 });
+
+test("manual conversation rename persists without changing messages or activity order", t => {
+  const dir = temporary(t);
+  const sessions = load("../main/sessions.js", { electron: { app: { getPath: () => dir } } });
+  const original = { id: "rename-me", title: "Untitled Chat", updatedAt: "2026-01-01", messages: [{ role: "user", content: "hello" }] };
+  fs.writeFileSync(sessions.getSessionFilePath(original.id), JSON.stringify(original));
+  sessions.renameSession(original.id, "  Linux setup  ");
+  const saved = sessions.loadSession(original.id);
+  assert.equal(saved.title, "Linux setup");
+  assert.equal(saved.titleSource, "manual");
+  assert.equal(saved.updatedAt, original.updatedAt);
+  assert.equal(JSON.stringify(saved.messages), JSON.stringify(original.messages));
+  assert.equal(fs.readdirSync(path.join(dir, "sessions")).length, 1);
+  for (const title of ["", "  ", "a".repeat(81), "bad\ntitle", null]) {
+    assert.throws(() => sessions.renameSession(original.id, title), /1–80/);
+  }
+  assert.throws(() => sessions.renameSession("missing", "valid"), /not found/);
+  assert.equal(sessions.loadSession(original.id).title, "Linux setup");
+});
+
+test("automatic titles persist and never overwrite manual names or recreate deleted chats", t => {
+  const dir = temporary(t);
+  const sessions = load("../main/sessions.js", { electron: { app: { getPath: () => dir } } });
+  const original = { id: "auto-title", title: "Untitled Chat", messages: [{ role: "user", content: "how do we make cs2 run on zorin?" }] };
+  fs.writeFileSync(sessions.getSessionFilePath(original.id), JSON.stringify(original));
+  assert.equal(sessions.needsAutomaticTitle(original), true);
+  sessions.renameSession(original.id, "Running CS2 on Zorin OS", "llm");
+  assert.equal(sessions.loadSession(original.id).titleSource, "llm");
+  assert.equal(sessions.needsAutomaticTitle(sessions.loadSession(original.id)), false);
+  sessions.renameSession(original.id, "My gaming setup");
+  assert.equal(sessions.renameSession(original.id, "Delayed automatic title", "llm"), null);
+  assert.equal(sessions.loadSession(original.id).title, "My gaming setup");
+  sessions.renameSession(original.id, "Untitled Chat");
+  assert.equal(sessions.needsAutomaticTitle(sessions.loadSession(original.id)), false);
+  sessions.deleteSession(original.id);
+  assert.throws(() => sessions.renameSession(original.id, "Late title", "llm"), /not found/);
+  assert.equal(sessions.loadSession(original.id), null);
+});

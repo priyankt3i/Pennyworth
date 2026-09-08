@@ -25,6 +25,25 @@ function clearChatDisplay() {
   el.chat.innerHTML = "";
 }
 
+const automaticSessionTitles = new Map();
+let sessionTitleListenerReady = false;
+function initSessionTitleListener() {
+  if (sessionTitleListenerReady) return;
+  sessionTitleListenerReady = true;
+  window.pennyworth.onSessionRenamed?.(updated => {
+  automaticSessionTitles.set(updated.id, updated.title);
+  const session = state.sessions.find(item => item.id === updated.id);
+  if (session) session.title = updated.title;
+  // Update just the label so an in-progress manual edit keeps focus and text.
+  for (const item of el.sessionsList?.children || []) {
+    if (item.dataset.id === updated.id) {
+      const label = item.querySelector(".session-title");
+      if (label) label.textContent = updated.title;
+    }
+  }
+  });
+}
+
 function renderSessionsList() {
   if (!el.sessionsList) return;
   el.sessionsList.innerHTML = "";
@@ -39,9 +58,50 @@ function renderSessionsList() {
     title.textContent = session.title || "Untitled Chat";
     item.appendChild(title);
 
+    const renameBtn = document.createElement("button");
+    renameBtn.className = "rename-session-btn";
+    renameBtn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z"/><path d="m14 5 5 5"/></svg>';
+    renameBtn.title = "Rename conversation";
+    renameBtn.type = "button";
+    renameBtn.setAttribute("aria-label", `Rename ${session.title || "conversation"}`);
+    renameBtn.addEventListener("click", event => {
+      event.stopPropagation();
+      if (item.querySelector("input")) return;
+      const input = document.createElement("input");
+      input.className = "session-rename-input";
+      input.value = session.title || "";
+      input.maxLength = 80;
+      input.setAttribute("aria-label", "Conversation title; Enter to save, Escape to cancel");
+      input.title = "Enter to save, Escape to cancel";
+      item.classList.add("is-renaming");
+      title.replaceWith(input);
+      input.focus();
+      input.select();
+      let saving = false;
+      input.addEventListener("click", event => event.stopPropagation());
+      input.addEventListener("keydown", async event => {
+        event.stopPropagation();
+        if (event.key === "Escape") { renderSessionsList(); return; }
+        if (event.key !== "Enter" || saving) return;
+        event.preventDefault();
+        saving = true;
+        try {
+          const result = await window.pennyworth.renameSession(session.id, input.value);
+          if (!result.ok) throw new Error(result.error);
+          automaticSessionTitles.set(session.id, result.session.title);
+          session.title = result.session.title;
+          renderSessionsList();
+          setStatus("Conversation renamed.", "ok");
+        } catch (error) { setStatus(error.message, "error"); }
+        finally { saving = false; }
+      });
+    });
+    item.appendChild(renameBtn);
+
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "delete-session-btn";
-    deleteBtn.innerHTML = "🗑";
+    deleteBtn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>';
+    deleteBtn.setAttribute("aria-label", `Delete ${session.title || "conversation"}`);
     deleteBtn.title = "Delete Chat";
     deleteBtn.type = "button";
     
@@ -63,10 +123,13 @@ function renderSessionsList() {
 }
 
 async function loadSessionsFlow() {
+  initSessionTitleListener();
   try {
     const result = await window.pennyworth.listSessions();
     if (result.ok) {
-      state.sessions = result.sessions || [];
+      state.sessions = (result.sessions || []).map(session => ({
+        ...session, title: automaticSessionTitles.get(session.id) || session.title,
+      }));
       renderSessionsList();
     }
   } catch (error) {

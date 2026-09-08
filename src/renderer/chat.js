@@ -4,6 +4,7 @@ function showLoader(show) {
 
 function setBusy(isBusy) {
   state.isBusy = isBusy;
+  if (el.newChatBtn) el.newChatBtn.disabled = isBusy;
   showLoader(isBusy);
   
   if (isBusy) {
@@ -25,11 +26,24 @@ function clearChatDisplay() {
   el.chat.innerHTML = "";
 }
 
+let sessionListCursor = null;
+let sessionListLoading = false;
+let historyLoadVersion = 0;
+let olderMessageCursor = null;
+function updateSessionSummary(session) {
+  if (!session) return;
+  const title = automaticSessionTitles.get(session.id) || session.title;
+  state.sessions = [{ ...session, title }, ...state.sessions.filter(item => item.id !== session.id)]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id));
+  renderSessionsList();
+}
+
 const automaticSessionTitles = new Map();
 let sessionTitleListenerReady = false;
 function initSessionTitleListener() {
   if (sessionTitleListenerReady) return;
   sessionTitleListenerReady = true;
+  window.pennyworth.onSessionUpdated?.(updateSessionSummary);
   window.pennyworth.onSessionRenamed?.(updated => {
   automaticSessionTitles.set(updated.id, updated.title);
   const session = state.sessions.find(item => item.id === updated.id);
@@ -120,21 +134,75 @@ function renderSessionsList() {
 
     el.sessionsList.appendChild(item);
   });
+  if (sessionListCursor) {
+    const more = document.createElement("button");
+    more.className = "history-load-more";
+    more.textContent = sessionListLoading ? "Loading…" : "Load more conversations";
+    more.disabled = sessionListLoading;
+    more.addEventListener("click", () => loadSessionsFlow(true));
+    el.sessionsList.appendChild(more);
+  }
 }
 
-async function loadSessionsFlow() {
+async function loadSessionsFlow(append = false) {
   initSessionTitleListener();
+  if (sessionListLoading) return false;
+  sessionListLoading = true;
+  renderSessionsList();
   try {
-    const result = await window.pennyworth.listSessions();
-    if (result.ok) {
-      state.sessions = (result.sessions || []).map(session => ({
-        ...session, title: automaticSessionTitles.get(session.id) || session.title,
-      }));
-      renderSessionsList();
+    const result = await window.pennyworth.listSessions({ cursor: append ? sessionListCursor : null, limit: 50 });
+    if (!result.ok) throw new Error(result.error);
+    const existing = append ? state.sessions : [];
+    const merged = new Map(existing.map(session => [session.id, session]));
+    for (const session of result.sessions || []) {
+      merged.set(session.id, { ...session, title: automaticSessionTitles.get(session.id) || session.title });
     }
-  } catch (error) {
-    console.error("Failed to load sessions:", error);
+    state.sessions = [...merged.values()];
+    sessionListCursor = result.nextCursor;
+    if (result.migrationWarnings?.length) {
+      pushNotification("error", `${result.migrationWarnings.length} conversation file(s) could not be imported. Originals are preserved; see README recovery instructions.`);
+    }
+    return true;
+  } catch (error) { setStatus(`Could not load conversations: ${error.message}`, "error"); return false; }
+  finally { sessionListLoading = false; renderSessionsList(); }
+}
+
+function renderHistoryMessages(messages, target) {
+  for (const msg of messages) {
+    const status = msg.status && msg.status !== "complete" ? ` · ${msg.status}` : "";
+    appendMessage(msg.role, msg.content, `${msg.role === "user" ? "You" : "Pennyworth"}${status}`, target);
   }
+}
+function addOlderMessagesControl(version) {
+  if (!olderMessageCursor) return;
+  const button = document.createElement("button");
+  button.className = "history-load-more";
+  button.textContent = "Load older messages";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "Loading…";
+    try {
+      const result = await window.pennyworth.loadSession(state.activeSessionId, { before: olderMessageCursor, limit: 50 });
+      if (version !== historyLoadVersion) return;
+      if (!result.ok) throw new Error(result.error);
+      const previousHeight = el.chat.scrollHeight;
+      const previousTop = el.chat.scrollTop;
+      const fragment = document.createDocumentFragment();
+      renderHistoryMessages(result.session.messages, fragment);
+      button.remove();
+      el.chat.prepend(fragment);
+      olderMessageCursor = result.nextBefore;
+      addOlderMessagesControl(version);
+      el.chat.scrollTop = previousTop + el.chat.scrollHeight - previousHeight;
+    } catch (error) {
+      if (version === historyLoadVersion) {
+        setStatus(`Could not load older messages: ${error.message}`, "error");
+        button.disabled = false;
+        button.textContent = "Retry loading older messages";
+      }
+    }
+  });
+  el.chat.prepend(button);
 }
 
 async function checkActiveProviderStatus() {
@@ -156,24 +224,28 @@ async function checkActiveProviderStatus() {
 }
 
 async function switchSessionFlow(sessionId) {
+  if (state.isBusy) return;
+  const version = ++historyLoadVersion;
   try {
     setBusy(true);
     setStatus("Loading conversation...");
     const result = await window.pennyworth.loadSession(sessionId);
     if (result.ok) {
       state.activeSessionId = sessionId;
-      state.history = result.session.messages || [];
+      state.history = (result.session.messages || []).filter(msg => msg.status === "complete").slice(-8);
+      olderMessageCursor = result.nextBefore;
       state.lastToolTrace = [];
       renderToolTrace([]);
       
       clearChatDisplay();
       
-      state.history.forEach((msg) => {
-        const label = msg.role === "user" ? "You" : "Pennyworth";
-        appendMessage(msg.role, msg.content, label);
-      });
+      const fragment = document.createDocumentFragment();
+      renderHistoryMessages(result.session.messages, fragment);
+      el.chat.appendChild(fragment);
+      addOlderMessagesControl(version);
+      el.chat.scrollTop = el.chat.scrollHeight;
 
-      if (state.history.length === 0) {
+      if (!result.session.messages.length) {
         const hasProvider = await checkActiveProviderStatus();
         if (!hasProvider) {
           appendWelcomeSetupCard();
@@ -201,11 +273,14 @@ async function switchSessionFlow(sessionId) {
 }
 
 async function createNewSessionFlow() {
+  if (state.isBusy) return;
   try {
     setBusy(true);
     setStatus("Creating new chat...");
     const result = await window.pennyworth.newSession();
     if (result.ok) {
+      historyLoadVersion += 1;
+      olderMessageCursor = null;
       state.activeSessionId = result.sessionId;
       state.history = [];
       state.lastToolTrace = [];
@@ -224,7 +299,9 @@ async function createNewSessionFlow() {
         );
       }
 
-      await loadSessionsFlow();
+      userMessage.querySelector(".message-meta").textContent = result.ok && !result.saveError ? "You" :
+      `You · ${result.session ? (/AGENT_STOPPED/.test(String(result.error)) ? "cancelled" : "failed") : "not saved"}`;
+    updateSessionSummary(result.session);
       setStatus("New chat ready.");
     } else {
       setStatus("Failed to create new chat.", "error");
@@ -238,6 +315,7 @@ async function createNewSessionFlow() {
 }
 
 async function deleteSessionFlow(sessionId) {
+  if (state.isBusy) return;
   const confirmDelete = confirm("Are you sure you want to delete this chat session?");
   if (!confirmDelete) return;
 
@@ -263,7 +341,7 @@ async function deleteSessionFlow(sessionId) {
   }
 }
 
-function appendMessage(role, text, meta) {
+function appendMessage(role, text, meta, target = el.chat) {
   const wrapper = document.createElement("article");
   wrapper.className = `message ${role}`;
 
@@ -277,8 +355,9 @@ function appendMessage(role, text, meta) {
 
   wrapper.appendChild(metaNode);
   wrapper.appendChild(content);
-  el.chat.appendChild(wrapper);
-  el.chat.scrollTop = el.chat.scrollHeight;
+  target.appendChild(wrapper);
+  if (target === el.chat) el.chat.scrollTop = el.chat.scrollHeight;
+  return wrapper;
 }
 
 function escapeHtml(input) {
@@ -564,13 +643,14 @@ async function askAgent() {
     return;
   }
 
+  const checkedSession = state.activeSessionId;
   const providerReady = await ensureActiveProviderForAsk();
-  if (!providerReady) {
+  if (!providerReady || state.isBusy || checkedSession !== state.activeSessionId) {
     return;
   }
 
-  const historyBeforeAsk = state.history.slice();
-  appendMessage("user", question, "You");
+  const requestSessionId = state.activeSessionId;
+  const userMessage = appendMessage("user", question, "You · sending");
   state.history.push({ role: "user", content: question });
   el.promptInput.value = "";
 
@@ -582,12 +662,13 @@ async function askAgent() {
   try {
     const result = await window.pennyworth.ask({
       question,
-      history: historyBeforeAsk,
       screenshotAttached: Boolean(state.screenshotData),
       screenshotData: state.screenshotData || null,
-      sessionId: state.activeSessionId,
+      sessionId: requestSessionId,
     });
 
+    updateSessionSummary(result.session);
+    if (result.saveError) pushNotification("error", result.saveError);
     if (!result.ok) {
       let providerHintShown = false;
       const details = extractErrorText(result.error, "");
@@ -612,13 +693,14 @@ async function askAgent() {
     state.history.push({ role: "assistant", content: result.reply });
     renderToolTrace(result.toolTrace || [], result.provider);
 
-    await loadSessionsFlow();
+    state.history = state.history.slice(-8);
     updateBadges(result.provider);
     if (state.screenshotData) {
       setCapturedImage(null);
     }
-    setStatus("Answer ready.", "ok");
+    setStatus(result.saveError || "Answer ready.", result.saveError ? "error" : "ok");
   } catch (error) {
+    userMessage.querySelector(".message-meta").textContent = "You · delivery uncertain";
     reportFailure("Agent invocation failed:", error, true);
   } finally {
     setBusy(false);

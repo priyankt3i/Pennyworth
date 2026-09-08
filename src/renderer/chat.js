@@ -591,6 +591,15 @@ function downsampleBuffer(buffer, inputSampleRate, targetSampleRate = 16000) {
 function initLiveTranscriptListener() {
   if (voiceState.isListenerSet || !window.pennyworth?.onLiveTranscriptPartial) return;
   voiceState.isListenerSet = true;
+  window.pennyworth.onVoiceStatus?.(({ stage } = {}) => {
+    const messages = {
+      loading: "Preparing local speech model. First use may require a download.",
+      transcribing: "Transcribing voice on this device...",
+      complete: "Local transcription complete.",
+      error: "Local transcription failed. Please retry; first use requires a model download.",
+    };
+    if (messages[stage]) setStatus(messages[stage], stage === "error" ? "error" : "ok");
+  });
 
   window.pennyworth.onLiveTranscriptPartial((data) => {
     if (data?.text) {

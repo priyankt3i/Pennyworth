@@ -60,7 +60,6 @@ parentPort.on("message", async (msg) => {
 
   isBusy = true;
   try {
-    const transcriber = await getTranscriber();
 
     let floatArray;
     if (Buffer.isBuffer(pcmBuffer) || pcmBuffer instanceof Uint8Array) {
@@ -104,6 +103,9 @@ parentPort.on("message", async (msg) => {
       }
     }
 
+    parentPort.postMessage({ id, stage: "loading" });
+    const transcriber = await getTranscriber();
+    parentPort.postMessage({ id, stage: "transcribing" });
     const output = await transcriber(floatArray, {
       return_timestamps: false,
     });

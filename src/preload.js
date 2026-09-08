@@ -34,5 +34,6 @@ contextBridge.exposeInMainWorld("pennyworth", {
   transcribeAudio: (payload) => ipcRenderer.invoke("pennyworth:transcribe-audio", payload),
   sendAudioStreamChunk: (payload) => ipcRenderer.send("pennyworth:audio-stream-chunk", payload),
   stopAudioStream: () => ipcRenderer.send("pennyworth:audio-stream-stop"),
+  onVoiceStatus: (handler) => ipcRenderer.on("pennyworth:voice-status", (_event, arg) => handler(arg)),
   onLiveTranscriptPartial: (handler) => ipcRenderer.on("pennyworth:live-transcript-partial", (_event, arg) => handler(arg)),
 });

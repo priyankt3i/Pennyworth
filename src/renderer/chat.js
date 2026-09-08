@@ -232,7 +232,7 @@ async function switchSessionFlow(sessionId) {
     const result = await window.pennyworth.loadSession(sessionId);
     if (result.ok) {
       state.activeSessionId = sessionId;
-      state.history = (result.session.messages || []).filter(msg => msg.status === "complete").slice(-8);
+      state.history = (result.session.messages || []).filter(msg => ["complete", "incomplete"].includes(msg.status)).slice(-8);
       olderMessageCursor = result.nextBefore;
       state.lastToolTrace = [];
       renderToolTrace([]);
@@ -670,6 +670,7 @@ async function askAgent() {
     updateSessionSummary(result.session);
     if (result.saveError) pushNotification("error", result.saveError);
     if (!result.ok) {
+      if (result.recoveryReport) appendMessage("assistant", result.recoveryReport, "Pennyworth · cancelled");
       let providerHintShown = false;
       const details = extractErrorText(result.error, "");
       if (details.includes("AGENT_STOPPED") || details.includes("Execution terminated by user")) {
@@ -689,7 +690,7 @@ async function askAgent() {
       ? `Pennyworth via ${result.provider} | docs: ${docMeta}`
       : `Pennyworth via ${result.provider}`;
 
-    appendMessage("assistant", result.reply, meta);
+    appendMessage("assistant", result.reply, result.outcome === "incomplete" ? `${meta} · incomplete` : meta);
     state.history.push({ role: "assistant", content: result.reply });
     renderToolTrace(result.toolTrace || [], result.provider);
 
@@ -698,7 +699,8 @@ async function askAgent() {
     if (state.screenshotData) {
       setCapturedImage(null);
     }
-    setStatus(result.saveError || "Answer ready.", result.saveError ? "error" : "ok");
+    setStatus(result.saveError || (result.outcome === "incomplete" ? "Run incomplete. Review the results before continuing." : "Answer ready."),
+      result.saveError ? "error" : result.outcome === "incomplete" ? "warn" : "ok");
   } catch (error) {
     userMessage.querySelector(".message-meta").textContent = "You · delivery uncertain";
     reportFailure("Agent invocation failed:", error, true);

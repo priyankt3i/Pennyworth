@@ -18,7 +18,7 @@ Automatic provider-generated names after a reply and on opening old untitled cha
 manual inline rename with matching SVG pencil/trash controls. Manual names win over
 late LLM results. The title request uses a bounded first-query excerpt, no tools.
 
-## Current phase — History performance and persistence
+## Completed implementation — History performance and persistence
 
 Branch: `fix/linux-conversation-history`
 
@@ -53,11 +53,29 @@ user backups. Pagination is not full virtualization; explicitly loading all olde
 pages grows DOM usage. Model context remains eight completed messages. JSON backup
 retention is intentional and does not provide secure deletion or reverse migration.
 
-## Next — Agent recovery
+## Current phase — Agent recovery
 
-Proposed branch: `fix/linux-agent-recovery`
-Graceful OpenAI/Ollama tool-budget exhaustion and regression coverage for provider
-failures/cancellation without repeating side effects.
+Branch: `fix/linux-agent-recovery`
+
+Implemented:
+- OpenAI/Ollama final summary requests with tools disabled, matching Gemini.
+- All providers ignore tool calls returned on the final turn and keep the limit notice.
+- Bounded recovery reports after provider failure or a missing final summary; no
+  failover/replay after a tool attempt. Only failures before tool attempts may fail over.
+- Per-request timeouts (OpenAI 30 s, Gemini 60 s, Ollama 120 s) and clearer connection,
+  access, quota and service errors. These do not cap the full multi-round run.
+- Persisted incomplete/cancelled reports and visible outcome labels. Cancellation
+  evidence remains available in recent model context; it does not guarantee that a
+  future user-requested continuation will avoid every repeated action.
+- Tool outcomes distinguish explicit reported success/failure, denial, blocking and
+  output without verified success. Recovery reports show at most eight attempts with
+  bounded excerpts. Completed side effects are never claimed to have been rolled back.
+
+Validation covers 1/10/50-round loops for all providers, final-call suppression,
+empty summaries, timeouts, cancellation, no replay, SQLite persistence, IPC and UI
+outcome labels. Live provider calls and real GUI checks remain to be run.
+Final automated suite: **136 passed, zero failed, one real sandbox test skipped**.
+Syntax and whitespace checks passed. README is synchronized with this phase.
 
 ## Then — Setup and capability feedback
 

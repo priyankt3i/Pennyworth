@@ -98,3 +98,32 @@ test("new-chat storage failure shows its underlying reason without replacing the
   assert.equal(context.state.isBusy, false);
   assert.match(statuses.at(-1), /disk full/);
 });
+
+test("an incomplete agent reply remains visible with its outcome and warning status", async () => {
+  const context = renderer();
+  context.state.activeSessionId = "chat";
+  context.el.promptInput.value = "do work";
+  context.ensureActiveProviderForAsk = async () => true;
+  const statuses = [];
+  context.setStatus = (message, kind) => statuses.push({ message, kind });
+  vm.runInContext("updateBadges = () => {}", context);
+  context.window.pennyworth.ask = async () => ({ ok: true, outcome: "incomplete", provider: "openai", reply: "Work remains.", session: { id: "chat", title: "Test", updatedAt: "2026-01-01" } });
+  await context.askAgent();
+  assert.equal(context.el.chat.children[0].querySelector(".message-meta").textContent, "You");
+  assert.match(context.el.chat.children.at(-1).querySelector(".message-meta").textContent, /incomplete/);
+  assert.equal(context.el.chat.children.at(-1).querySelector(".message-body").html, "Work remains.");
+  assert.equal(statuses.at(-1).kind, "warn");
+  assert.equal(context.state.isBusy, false);
+});
+
+test("a cancelled run shows its recovery evidence rather than silently dropping it", async () => {
+  const context = renderer();
+  context.state.activeSessionId = "chat";
+  context.el.promptInput.value = "do work";
+  context.ensureActiveProviderForAsk = async () => true;
+  context.window.pennyworth.ask = async () => ({ ok: false, error: "AGENT_STOPPED", recoveryReport: "A tool already ran.", session: { id: "chat", title: "Test", updatedAt: "2026-01-01" } });
+  await context.askAgent();
+  assert.match(context.el.chat.children[0].querySelector(".message-meta").textContent, /cancelled/);
+  assert.equal(context.el.chat.children.at(-1).querySelector(".message-body").html, "A tool already ran.");
+  assert.equal(context.state.isBusy, false);
+});

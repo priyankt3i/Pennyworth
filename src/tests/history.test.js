@@ -158,3 +158,24 @@ test("a failed assistant insert rolls back the request status with the response"
   db.finish({ sessionId, requestId: run.requestId, reply: "answer" });
   assert.equal(db.load({ sessionId }).session.messages.length, 2);
 });
+
+test("incomplete replies and cancellation reports survive reopening with their outcome labels", t => {
+  const root = fixture(t);
+  let db = openHistory(root);
+  const { sessionId } = db.create();
+  let run = db.begin({ sessionId, question: "do work" });
+  db.finish({ sessionId, requestId: run.requestId, reply: "Tool limit reached; work remains.", status: "incomplete" });
+  db.close(); db = openHistory(root);
+  assert.equal(db.load({ sessionId }).session.messages.at(-1).status, "incomplete");
+  run = db.begin({ sessionId, question: "continue" });
+  assert.equal(run.history.at(-1).content, "Tool limit reached; work remains.");
+  db.finish({ sessionId, requestId: run.requestId, status: "cancelled", report: "Run cancelled. A previous change may have taken effect." });
+  db.close(); db = openHistory(root);
+  const messages = db.load({ sessionId }).session.messages;
+  assert.equal(messages.at(-1).status, "cancelled");
+  assert.match(messages.at(-1).content, /previous change/);
+  run = db.begin({ sessionId, question: "next request" });
+  assert.ok(run.history.some(message => message.content.includes("previous change")));
+  db.finish({ sessionId, requestId: run.requestId, status: "failed" });
+  db.close();
+});

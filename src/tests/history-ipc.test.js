@@ -76,3 +76,26 @@ test("a save failure returns the generated reply with an explicit warning", asyn
   assert.equal(result.reply, "keep this answer");
   assert.match(result.saveError, /could not be saved: disk full/);
 });
+
+test("IPC persists incomplete replies with their explicit outcome", async () => {
+  let saved;
+  const ipc = handlers({
+    begin: async () => pending,
+    finish: async payload => { saved = payload; return pending.session; },
+  }, async () => ({ reply: "Work remains.", provider: "ollama", outcome: "incomplete" }));
+  const result = await ipc["pennyworth:ask"](event, { sessionId: "chat", question: "hello" });
+  assert.equal(result.outcome, "incomplete");
+  assert.equal(saved.status, "incomplete");
+});
+
+test("IPC saves cancellation evidence and returns it to the renderer", async () => {
+  let saved;
+  const ipc = handlers({
+    begin: async () => pending,
+    finish: async payload => { saved = payload; return pending.session; },
+  }, async () => { throw Object.assign(new Error("AGENT_STOPPED"), { code: "AGENT_STOPPED", recoveryReport: "Run cancelled. A tool already ran." }); });
+  const result = await ipc["pennyworth:ask"](event, { sessionId: "chat", question: "hello" });
+  assert.equal(saved.status, "cancelled");
+  assert.equal(saved.report, result.recoveryReport);
+  assert.match(result.recoveryReport, /tool already ran/);
+});

@@ -17,7 +17,7 @@ The Linux work is proceeding in focused branches. See the
 | Voice reliability | `fix/linux-voice-reliability` | Separate loading/inference deadlines, bounded queue, worker recovery and status feedback |
 | Conversation naming | `feat/linux-conversation-titles` | Background LLM titles and manual SVG rename control |
 | History performance and persistence | `fix/linux-conversation-history` | Worker-backed SQLite, paginated lists/messages, transactional saves and JSON migration |
-| Agent recovery | `fix/linux-agent-recovery` (planned) | Consistent tool-limit responses and provider failure handling |
+| Agent recovery | `fix/linux-agent-recovery` | Final summary turns, incomplete/cancelled reports and no automatic replay after tool attempts |
 | Setup feedback | `fix/linux-setup-feedback` (planned) | Clear capability/dependency availability before tool use |
 | Linux release validation | `fix/linux-release-validation` (planned) | Installed-app checks, security validation and distribution preparation |
 
@@ -69,8 +69,10 @@ rename, Enter to save and Escape to cancel. Manual titles always take precedence
 - Save failures are surfaced. If a reply cannot be saved, it remains displayed
   with a warning so it can be copied before closing the app.
 - Model context is separate from displayed history: the backend supplies the last
-  eight completed messages. Older pages and failed prompts are not automatically
-  added to model context. Token-budgeted context/summarization remains future work.
+  eight eligible messages: completed exchanges, incomplete replies and saved
+  cancellation reports. Cancellation reports keep prior side effects visible to
+  the model on continuation; failed/cancelled user prompts are excluded. Older
+  display pages do not expand model context. Token budgeting remains future work.
 
 ### Storage, migration and recovery
 
@@ -105,6 +107,37 @@ the credential vault. Legacy backups also contain conversation text. Deleting an
 imported chat removes the active database records but does not erase its retained
 JSON backup or securely erase disk blocks. Older app versions do not see messages
 written only to SQLite; keep a backup and avoid using old/new versions concurrently.
+
+## Agent recovery and tool limits
+
+The tool-round setting allows 1–50 rounds. A round may contain multiple tool calls.
+At the limit, OpenAI, Ollama and Gemini receive one additional request to summarize
+collected results with tools disabled. Returned tool calls on that final turn are
+ignored. The summary is labelled **incomplete**, includes a limit notice and is
+saved with that label. Normal answers do not incur an extra summary request.
+
+Provider requests have per-request timeouts: OpenAI 30 seconds, Gemini 60 seconds,
+Ollama 120 seconds (including its web-result synthesis). These are not total-run
+deadlines. Timeout, connection, API-access, quota and service errors have actionable
+messages. There are no automatic retries of a tool attempt.
+
+If a provider fails after tool execution starts, the app does not fail over and
+repeat work. It saves an incomplete report containing the last eight tool attempts
+and bounded output excerpts. Empty or tool-only final summaries also use this
+report. Tool results distinguish reported success/failure, denial/blocking, and
+output whose success has not been verified. These labels describe evidence, not
+proof that the overall user objective is complete.
+
+Cancellation stays cancellation, even if a late provider response arrives. If tools
+already started, a cancellation report is displayed and saved. Completed effects
+are not rolled back; verify their state before asking to continue. Automatic replay
+is prevented within the failed run; a later user-requested continuation still needs
+model judgment, tool verification and the usual approvals.
+
+OpenAI summary turns use `tool_choice: "none"`, as documented in the
+[official API reference](https://developers.openai.com/api/reference/cli/resources/chat).
+Provider-limit, cancellation and recovery tests use mocked responses; live provider
+and GUI validation remains required for this phase.
 
 ## Voice input
 
@@ -162,8 +195,8 @@ npm run pack -- --linux
 npm run dist:linux
 ```
 
-Current branch validation: **104 tests passed, zero failed, one real sandbox test
-skipped**. The unsigned Linux directory package built successfully, and its
+Current branch validation: **136 tests passed, zero failed, one real sandbox test
+skipped**. The history-phase unsigned Linux directory package built successfully, and its
 packaged SQLite worker created a conversation using isolated temporary data.
 
 The synthetic history benchmark creates and deletes its own temporary fixtures;
@@ -196,7 +229,8 @@ Cross-platform jobs are compatibility checks, not a claim of full product suppor
 
 - Native Linux and real Flatpak tests for approvals, execution boundaries, desktop
   sessions, cancellation, first-run setup and installed-package behavior.
-- More consistent OpenAI/Ollama handling when tool limits are reached.
+- Live-provider and installed-UI verification of tool-limit summaries and recovery
+  reports, including slow local models.
 - Dependency/capability feedback, voice end-to-end checks, and broader upgrade and
   credential recovery validation.
 - Independent security review, distribution/signing decisions, and tested update
@@ -210,7 +244,8 @@ Cross-platform jobs are compatibility checks, not a claim of full product suppor
   bridge, worker and SQLite storage/migration.
 - `src/main/ipc-handlers.js`, `ipc-security.js`: guarded application operations.
 - `src/main/local-whisper.js`, `whisper-worker.js`: local speech lifecycle/inference.
-- `src/core/providers.js`, `conversation-title.js`: chat and background naming.
+- `src/core/providers.js`, `agent-recovery.js`, `conversation-title.js`: chat, recovery
+  reports and background naming.
 - `src/core/execution-runner.js`, `safe-path.js`, `tools/`: execution and file controls.
 - `src/renderer/chat.js`, `settings.js`, `app.js`: conversation UI, settings and startup.
 - `src/tests/`: automated regression checks; `scripts/electron-smoke.js`: GUI smoke.

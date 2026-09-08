@@ -593,11 +593,10 @@ async function init() {
     el.newChatBtn.addEventListener("click", createNewSessionFlow);
   }
 
-  await loadSessionsFlow();
-  if (state.sessions.length > 0) {
-    await switchSessionFlow(state.sessions[0].id);
-  } else {
-    await createNewSessionFlow();
+  const historyLoaded = await loadSessionsFlow();
+  if (historyLoaded) {
+    if (state.sessions.length > 0) await switchSessionFlow(state.sessions[0].id);
+    else await createNewSessionFlow();
   }
 
   if (window.pennyworth.onBootstrapProgress) {

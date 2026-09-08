@@ -7,7 +7,7 @@ const axios = require("axios");
 
 const { storeGet, storeSet } = require("./store");
 const { getStoredApiKey, setStoredApiKey, clearStoredApiKey, getVaultStatus, setupVault, unlockVault } = require("./vault");
-const { getSessionFilePath, listSessions, loadSession, deleteSession, renameSession, needsAutomaticTitle } = require("./sessions");
+const historyStore = require("./history");
 const { bootstrapOllama, bootstrapSetDefaultProvider } = require("./bootstrap");
 const { getProviderState, saveProviderState, getProviderStateForUi } = require("./provider-config");
 const { listOllamaModels, listOpenAIModels, listGeminiModels, invalidateProviderHealthCache, getProviderHealth } = require("./health");
@@ -15,14 +15,14 @@ const { runtimeState, getAgentContextState } = require("./profiles");
 const { transcribeLocalPcm, terminateWorker } = require("./local-whisper");
 
 const titleJobs = new Map();
+const conversationRuns = new Map();
 function scheduleAutomaticTitle(sessionId, sender, answeredProvider = null, activeConfig = null) {
   if (titleJobs.has(sessionId)) return;
   const job = (async () => {
     // Yield so title generation never delays the chat response or session load.
     await Promise.resolve();
-    const session = loadSession(sessionId);
-    if (!needsAutomaticTitle(session)) return;
-    const question = session.messages?.find(message => message.role === "user")?.content;
+    const session = await historyStore.titleContext({ sessionId });
+    const question = session?.question;
     if (!question) return;
     const config = activeConfig || getProviderState();
     const provider = answeredProvider || session.titleProvider || config.defaultProvider;
@@ -36,7 +36,7 @@ function scheduleAutomaticTitle(sessionId, sender, answeredProvider = null, acti
     const { generateTitle } = require("../core/conversation-title");
     const title = await generateTitle(provider, providerConfig, question, config.customCaCertPath);
     // Reload before saving: manual renames and deletion can occur during inference.
-    const updated = renameSession(sessionId, title, "llm");
+    const updated = await historyStore.rename({ sessionId, title, source: "llm" });
     if (updated && sender && !sender.isDestroyed()) sender.send("pennyworth:session-renamed", updated);
   })().catch(() => {
     // A title failure must not fail the conversation. Opening it again retries.
@@ -785,15 +785,24 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
   });
 
   ipcMain.handle("pennyworth:ask", async (_event, payload) => {
+    let pendingRequest = null;
+    let savedSession = null;
+    let runState = null;
     try {
-      if (payload?.sessionId !== undefined) getSessionFilePath(payload.sessionId);
+      if (!payload?.sessionId) throw new Error("Create a conversation before sending a message.");
+      if (conversationRuns.has(payload.sessionId)) throw new Error("A request is already running for this conversation.");
+      runState = { cancelled: false };
+      conversationRuns.set(payload.sessionId, runState);
+      pendingRequest = await historyStore.begin({ sessionId: payload.sessionId, question: String(payload.question || "").trim() });
+      savedSession = pendingRequest.session;
+      if (!_event.sender.isDestroyed()) _event.sender.send?.("pennyworth:session-updated", savedSession);
       const providerConfig = getProviderState();
       const agentContext = getAgentContextState();
       const state = runtimeState();
       const systemContext = state.contextWithOverrides.systemContext;
 
       const userPrompt = String(payload?.question || "").trim();
-      const history = Array.isArray(payload?.history) ? payload.history : [];
+      const history = pendingRequest.history;
       const screenshotAttached = Boolean(payload?.screenshotAttached);
       const screenshotData = payload?.screenshotData || null;
 
@@ -814,6 +823,7 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
       const docsUsed = retrieveContext(ROOT_DIR, state.profileId, userPrompt);
       const mainWindow = getMainWindow();
 
+      if (runState.cancelled) throw new Error("AGENT_STOPPED: Execution terminated by user.");
       const result = await askWithFailover(activeConfig, {
         userPrompt,
         sessionId: payload?.sessionId,
@@ -830,39 +840,43 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
         },
       });
 
-      // Append assistant reply to session file on disk
-      const sessionId = payload?.sessionId;
-      if (sessionId) {
-        const sessionFile = getSessionFilePath(sessionId);
-        if (fs.existsSync(sessionFile)) {
-          try {
-            const data = loadSession(sessionId);
-            data.messages = data.messages || [];
-            data.messages.push({ role: "user", content: userPrompt });
-            data.messages.push({ role: "assistant", content: result.reply });
-            data.updatedAt = new Date().toISOString();
-            data.titleProvider = data.titleProvider || result.provider;
-            fs.writeFileSync(sessionFile, JSON.stringify(data, null, 2), "utf8");
-            scheduleAutomaticTitle(sessionId, _event.sender, result.provider, activeConfig);
-          } catch (e) {
-            console.error("Failed to append reply to session file:", e.message);
-          }
-        }
+      let saveError = null;
+      try {
+        savedSession = await historyStore.finish({ sessionId: payload.sessionId, requestId: pendingRequest.requestId, reply: result.reply, provider: result.provider });
+        pendingRequest = null;
+        scheduleAutomaticTitle(payload.sessionId, _event.sender, result.provider, activeConfig);
+      } catch (error) {
+        saveError = `The answer is displayed but could not be saved: ${error.message}`;
+        try { await historyStore.finish({ sessionId: payload.sessionId, requestId: pendingRequest.requestId, status: "failed" }); } catch (_) {}
+        pendingRequest = null;
       }
 
       return {
         ok: true,
+        session: savedSession,
+        saveError,
         provider: result.provider,
         reply: result.reply,
         toolTrace: result.toolTrace,
         docsUsed,
       };
     } catch (error) {
-      return { ok: false, error: error.message };
+      let saveError = null;
+      if (pendingRequest) {
+        try {
+          savedSession = await historyStore.finish({ sessionId: payload.sessionId, requestId: pendingRequest.requestId,
+            status: /AGENT_STOPPED|ERR_CANCELED/.test(`${error.code} ${error.message}`) ? "cancelled" : "failed" });
+        } catch (saveFailure) { saveError = `Could not save request status: ${saveFailure.message}`; }
+      }
+      return { ok: false, error: error.message, session: savedSession, saveError };
+    } finally {
+      if (runState && conversationRuns.get(payload?.sessionId) === runState) conversationRuns.delete(payload.sessionId);
     }
   });
 
   ipcMain.handle("pennyworth:cancel-agent", async (_event, sessionId) => {
+    const run = conversationRuns.get(sessionId);
+    if (run) run.cancelled = true;
     cancelCurrentSession(sessionId);
     return { ok: true };
   });
@@ -904,20 +918,20 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
     }
   });
 
-  ipcMain.handle("pennyworth:list-sessions", async () => {
+  ipcMain.handle("pennyworth:list-sessions", async (_event, options) => {
     try {
-      return { ok: true, sessions: listSessions() };
+      return { ok: true, ...await historyStore.list(options) };
     } catch (error) {
       return { ok: false, error: error.message };
     }
   });
 
-  ipcMain.handle("pennyworth:load-session", async (_event, sessionId) => {
+  ipcMain.handle("pennyworth:load-session", async (_event, sessionId, options = {}) => {
     try {
-      const session = loadSession(sessionId);
-      if (session) {
+      const page = await historyStore.load({ ...options, sessionId });
+      if (page.session) {
         scheduleAutomaticTitle(sessionId, _event.sender);
-        return { ok: true, session };
+        return { ok: true, ...page };
       }
       return { ok: false, error: "Session not found." };
     } catch (error) {
@@ -927,16 +941,7 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
 
   ipcMain.handle("pennyworth:new-session", async () => {
     try {
-      const sessionId = crypto.randomUUID();
-      const session = {
-        id: sessionId,
-        title: "Untitled Chat",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        messages: [],
-      };
-      fs.writeFileSync(getSessionFilePath(sessionId), JSON.stringify(session, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
-      return { ok: true, sessionId, session };
+      return { ok: true, ...await historyStore.create() };
     } catch (error) {
       return { ok: false, error: error.message };
     }
@@ -944,13 +949,13 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
 
   ipcMain.handle("pennyworth:rename-session", async (_event, payload) => {
     try {
-      return { ok: true, session: renameSession(payload?.sessionId, payload?.title) };
+      return { ok: true, session: await historyStore.rename({ sessionId: payload?.sessionId, title: payload?.title }) };
     } catch (error) { return { ok: false, error: error.message }; }
   });
 
   ipcMain.handle("pennyworth:delete-session", async (_event, sessionId) => {
     try {
-      const success = deleteSession(sessionId);
+      const success = await historyStore.delete({ sessionId });
       return { ok: success };
     } catch (error) {
       return { ok: false, error: error.message };

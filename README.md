@@ -1,369 +1,217 @@
 # Pennyworth
 
-Pennyworth is a cross-platform desktop AI assistant (Electron) designed to feel like a true system copilot: always available from the tray, context-aware about the host, and capable of using tools to help troubleshoot, manage, and configure your system. Its agent supports explicit execution targets, command approvals, diagnostic probes, and persistent memory. This is a development build; see [execution safety and release gates](docs/EXECUTION-SAFETY.md).
+Pennyworth is a Linux-first Electron desktop assistant with Ollama, OpenAI and
+Gemini chat, approved system tools, screenshots, voice input and local history.
+**This is a development build, not a production release or security certification.**
+Windows/macOS packaging configurations exist, but full system control on those
+platforms is outside the current release scope.
 
-## Vision
+## Current development state
 
-**Original goal:** Build a Batman-style butler for Linux power users (starting with Arch/CachyOS), then expand to broader distro families and eventually support full Windows/macOS/Linux parity with strong security boundaries.
+The Linux work is proceeding in focused branches. See the
+[phase plan](docs/LINUX-RELEASE-PLAN.md) and
+[execution safety and release gates](docs/EXECUTION-SAFETY.md).
 
-**Current state:** The prototype runs on Windows/macOS/Linux with production-grade security hardening, modular architecture, comprehensive provider tool-calling support, local RAG, screenshot-to-model chat context, robust fail-safes, and 40+ pre-configured distro profiles.
+| Phase | Branch | Implementation state |
+| --- | --- | --- |
+| Voice reliability | `fix/linux-voice-reliability` | Separate loading/inference deadlines, bounded queue, worker recovery and status feedback |
+| Conversation naming | `feat/linux-conversation-titles` | Background LLM titles and manual SVG rename control |
+| History performance and persistence | `fix/linux-conversation-history` | Worker-backed SQLite, paginated lists/messages, transactional saves and JSON migration |
+| Agent recovery | `fix/linux-agent-recovery` (planned) | Consistent tool-limit responses and provider failure handling |
+| Setup feedback | `fix/linux-setup-feedback` (planned) | Clear capability/dependency availability before tool use |
+| Linux release validation | `fix/linux-release-validation` (planned) | Installed-app checks, security validation and distribution preparation |
 
-## Current Progress (Implemented)
+These describe the code in this checkout, not deployment or merge status. Update
+this README and the phase plan when a phase changes behavior or validation status.
 
-### Core Architecture & Stability
-- **Modular Refactor (PR #5, Complete):**
-  - `src/main.js` split into 9 specialized controllers (`store.js`, `vault.js`, `sessions.js`, `provider-config.js`, `health.js`, `bootstrap.js`, `profiles.js`, `ipc-handlers.js`, `index.js`)
-  - `src/core/tools.js` split into 5 focused modules (`info-tools.js`, `web-tools.js`, `memory-tools.js`, `system-tools.js`, `index.js`)
-  - `src/renderer/app.js` split into 5 UI components (`dom.js`, `toasts.js`, `settings.js`, `chat.js`, `app.js`)
-  - All 29 unit tests passing post-refactor ✓
+## Features
 
-### Electron Desktop Shell
-- Tray icon + double-click summon
-- Global shortcut: `Ctrl+Shift+Space`
-- Frameless app window + in-app window controls (minimize/maximize/close-to-tray)
-- Settings modal + runtime provider badges
-- Custom app/taskbar/tray icons from `public/pennyworth.ico` and `public/pennyworth.png`
+- Tray access, click to summon, `Ctrl+Shift+Space`, and close-to-tray window controls.
+- Provider/model selection, connection checks, encrypted API credentials and custom
+  CA support in the provider clients. Screenshots require a vision-capable model.
+- Shared tool definitions for Ollama, OpenAI and Gemini; configurable tool rounds
+  (1–50), concise response mode and a developer trace panel with copy/clear controls.
+- Explicit Linux sandbox/host execution targets, native approvals, file protections,
+  cancellation and fixed diagnostic probes. Provider failover stops after a tool
+  attempt to avoid repeating side effects.
+- Host/distro detection, local documentation retrieval and persistent fact tools.
+  A distro profile is context, not proof that every action works on that distro.
+- Light/dark themes, Markdown replies and visible error notifications.
 
-### System Awareness & Distro Support
-- **Auto-detection:** Host platform, architecture, distro/profile
-- **40+ Pre-configured Profiles:** Arch family (CachyOS, EndeavourOS, Manjaro, SteamOS, Garuda, Artix, BlackArch), Debian/Ubuntu family (Mint, Pop!_OS, Kali, Zorin, MX, Raspberry Pi, Parrot, elementary, Deepin, Bodhi, Tails), Fedora/RHEL family (Workstation, RHEL, AlmaLinux, Rocky, Nobara, CentOS, Amazon Linux, Asahi), openSUSE, Gentoo, independent distros (NixOS, Solus, Void, Alpine, Clear, Slackware, Qubes), BSD (FreeBSD, OpenBSD), Windows (10, 11, Server 2025), macOS (Sequoia, Tahoe), ChromeOS, Haiku
-- System fingerprint context (kernel, desktop, package-manager presence, etc.)
+## Conversations
 
-### Security controls (release validation required)
-- **Electron safeStorage Vault:**
-  - Built-in OS keychain integration (DPAPI on Windows, Keychain on macOS, Libsecret on Linux)
-  - PBKDF2 fallback with 100,000 iterations + random per-install salting for offline environments
-  - Backwards-compatible migration path (no user lockout on update) ✓
-  
-- **Custom Corporate CA Certificate Support:**
-  - Root CA Certificate Path input in UI settings
-  - Secure `https.Agent` instantiation for all outgoing tool requests
-  - Eliminates blanket `NODE_TLS_REJECT_UNAUTHORIZED` bypass
-  - Enforced across all health checks and provider connectivity (PR #8) ✓
+### Automatic names and manual rename
 
-- **Command risk scoring and isolation:**
-  - **Score 1 (Low Risk):** Exact low-risk queries → auto-approved only inside the isolated sandbox; host commands always require approval
-  - **Score 2 (Medium Risk):** Standard actions (e.g. package management) → user approval popup
-  - **Score 3 (High Risk):** Service/registry/network modifications → prominent warning window
-  - **Score 4 (Critical Risk - Blocked):** Destructive commands, download-and-execute pipes → automatically blocked
-  - **Sensitive Path Filter:** Known credential patterns receive additional warnings or command blocking; all direct file access requires approval.
-  - **Obfuscation Defenses (PR #6):**
-    - Quote-stripping pre-processing (defeats `cat ~/.s"s"h/id_r's'a` bypasses)
-    - Variable substitution scanning (detects `a=.env; cat $a` indirection)
-    - Known credential-path pattern detection (not a complete shell security boundary)
-  - **Windows/PowerShell Parity:** Blocks `Remove-Item -Path C:\\ -Recurse -Force`, `Clear-Disk`, `Format-Disk`, credential extraction (`reg save hklm\sam`), service manipulation, firewall rule disabling
+After a successful reply, a background request asks the answering provider to name
+an untitled conversation using up to 2,000 characters of its first query. This is
+an additional LLM request and may incur provider charges. Existing untitled chats
+are named when opened, using their saved provider or the current provider if none
+was recorded. Title failures leave the conversation usable and retry on a later
+open/reply. No system tools are available to the title request.
 
-- **Elevated Prompt for Sensitive Operations:**
-  - Electron native `dialog.showMessageBox()` for approval gates
-  - Risk descriptions and privilege implications displayed before execution
+For example, “how do we make cs2 run on zorin?” can become “Running CS2 on Zorin OS.”
+The exact wording is model-generated. Hover over a sidebar row or focus its controls
+with the keyboard to reveal matching SVG pencil/trash icons. Use the pencil to
+rename, Enter to save and Escape to cancel. Manual titles always take precedence.
 
-### Provider Layer (Multi-Model + Tool-Calling)
-- **Supported Providers:** Ollama (local), OpenAI, Gemini
-- **Native Tool-Calling Support:**
-  - Ollama: OpenAI-compatible tool specifications (`/api/chat` loop)
-  - OpenAI: Tool Definitions
-  - Gemini: Function Declarations
-- **Single Active Provider Selection:** Tabbed LLM section in settings
-- **Provider Health Checks:** Real-time status in settings panel
-- **API Key Management:** Encrypted storage via Electron safeStorage or local PBKDF2 vault
-- **Model Auto-Discovery:** Ollama model dropdown auto-populated
-- **Provider Failover Routing:** Attempts all enabled providers in order, falls back gracefully
-- **No-Provider Fallback:** Icon and guided status/help messaging when all providers disabled
+### Loading and saving
 
-### Agentic Tool Use (Pennyworth System Handler)
-- **Information Tools:**
-  - `get_current_datetime`: System clock + timezone
-  - `get_weather`: Open-Meteo integration with optional IP-location permission
-  - `web_search`: DuckDuckGo fresh web lookup
+- The sidebar fetches 50 metadata records at a time. **Load more conversations**
+  fetches the next page without reading complete transcripts.
+- Opening a conversation loads its latest 50 messages. **Load older messages**
+  prepends another page while preserving scroll position. Explicitly loading more
+  pages expands the rendered history; this is pagination, not full virtualization.
+- SQLite runs in a dedicated worker. Indexed queries and disk operations do not
+  run in Electron's main process. Replies update the affected sidebar entry.
+- User queries are committed before provider execution. Successful replies and
+  request status are committed together. Failed/cancelled queries remain visible;
+  unfinished requests become `interrupted` after restart.
+- Save failures are surfaced. If a reply cannot be saved, it remains displayed
+  with a warning so it can be copied before closing the app.
+- Model context is separate from displayed history: the backend supplies the last
+  eight completed messages. Older pages and failed prompts are not automatically
+  added to model context. Token-budgeted context/summarization remains future work.
 
-- **System Administration Tools:**
-  - `execute_system_command`: Shell execution (bash/sh on Linux/macOS, PowerShell/CMD on Windows) with risk scoring
-  - `read_system_file`: Config/log inspection with sensitive path filtering
-  - `write_system_file`: Script generation + config updates with approval gates
-  - `get_system_status`: Live host state (CPU model/utilization, memory, disk, processes, systemd services, network adapters)
+### Storage, migration and recovery
 
-- **Memory & Knowledge Tools:**
-  - `remember_fact`: Persistent butler memory (saves to `pennyworth-memory.json`)
-  - `recall_facts`: Fuzzy search over learned facts
-  - Memories automatically injected into Pennyworth' system prompt on boot
+History lives under Electron's `app.getPath("userData")`:
 
-### Retrieval-Augmented Generation (RAG)
-- **Local Docs Retrieval:** Lexical keyword scoring from `data/docs/<profile>` directory
-- **Distro Docs Crawler:** `scripts/crawl-docs.js` pulls distro documentation locally
-- **Profile-Aware:** Docs matched to detected or user-selected distro
-
-### UI/UX & Notifications
-- **Screenshot Capture:**
-  - Monitor selection + region selection UI
-  - Capture flow hides app before screenshot to avoid self-capture artifacts
-  - Screenshot payload sent with chat requests to compatible providers/models
-  - Full vision-model support for screenshot interpretation
-
-- **Input Methods:**
-  - Speech-to-text input (browser speech recognition API)
-  - Markdown chat rendering
-  - Message history with session persistence
-
-- **Real-Time Feedback:**
-  - Developer trace panel for provider/tool execution visibility
-  - Live status bar updates as trace events fire (exact actions Pennyworth is performing)
-  - Failure messages surfaced in UI instead of silent errors
-
-- **Toast Notifications:**
-  - Dismissible floating cards (top-right) for warnings/errors
-  - Auto-fade for success/info messages after 6 seconds
-  - Notification history modal with bell icon (🔔) and red unread badge
-  - Color-coded timeline (Red = error, Yellow = warning, Green = success, Blue = info)
-  - Clear History button to reset logs
-
-- **Dynamic Stop Button:**
-  - Red Stop button appears when busy (replaces Send)
-  - Cancels pending tool work and terminates supported running command process groups
-  - Raises `AGENT_STOPPED` error at next step
-
-### Testing & CI/CD
-- **Unit Test Suite:** 29 tests covering:
-  - Command risk scoring (Low, Medium, High, Blocked)
-  - Sensitive path blocking (SSH keys, credentials, shell configs)
-  - Obfuscation bypass detection (quote-stripping, variable indirection)
-  - Windows PowerShell destructive command blocking
-  - Session management and metadata sorting
-  - Vault operations and API key encryption
-- **GitHub Actions Pipeline:** `.github/workflows/test.yml`
-  - Runs headless tests on Node v22
-  - Triggered on every push to `main` and all PR merge targets
-  - All 29 tests passing ✓
-
-## Current Limits
-
-- Voice is input-only right now (no TTS playback for two-way voice conversation yet).
-- Screen context is capture-on-demand, not continuous live screen share.
-- No terminal streaming parser yet (user still pastes errors manually in most flows).
-- RAG is lexical retrieval (keyword scoring), not embeddings/vector search yet.
-- No autonomous action-execution engine yet (assistant advises; approval gates required for all system-changing actions).
-- Visual reasoning quality depends on selected model/provider capabilities (vision-capable model required for screenshot interpretation).
-
-## Roadmap Toward "True Copilot"
-
-### Phase 1: Stabilize Core Agent (Complete)
-1. ✅ Harden provider/tool error handling and trace visibility (DONE — PR #5 refactor, trace events)
-2. ✅ Docs ingestion + chunking quality for distro knowledge (DONE — lexical RAG, crawl-docs.js)
-3. ✅ Cross-platform packaging reliability and first-run diagnostics (DONE — bootstrap.js, health checks)
-4. ✅ Provider/model readiness checks before chat send (DONE — health.js, provider state validation)
-5. Credential storage: OS keychain, passphrase vault fallback and custom CA support; production validation remains required.
-
-### Phase 2: Real Copilot Experience
-1. Full voice chat:
-   - Push-to-talk + optional wake-word mode
-   - Speech-to-text (done) + text-to-speech for conversational loop
-2. Share-screen modes:
-   - One-shot capture (done) plus continuous session share (next)
-   - OCR + UI element detection so Pennyworth can reference on-screen errors directly
-3. Terminal co-pilot mode:
-   - Detect shell errors in real time
-   - Propose fixes with confidence, risk, and rollback guidance
-4. **Persistent Memory Enhancements:**
-   - `remember_fact` and `recall_facts` tools (DONE — foundational)
-   - User-controlled privacy settings for memory retention
-   - Memory exports/backups
-
-### Phase 3: Safe Agentic Actions
-1. ✅ Explicit approval gates before any system-changing command (DONE — risk scoring + dialogs)
-2. ✅ Dry-run plans and command previews (DONE foundation — shown in UI before approval)
-3. Audit log/history of actions taken (foundation laid in trace system)
-4. Sandboxed executor profiles per distro family
-
-### Phase 4: Rich Knowledge + Memory
-1. Embeddings-based RAG with citations across distro docs (vector search instead of keyword scoring)
-2. Advanced memory with multi-session context and learning
-3. Continuous OS profile expansion (currently 40+ distros, room for more specialized profiles)
-
-## Project Structure
-
-```
-src/
-  main.js                    # Electron entry point (routes to main/index.js for non-test)
-  main/                      # Main process controllers
-    index.js                 # App lifecycle, tray, window, shortcuts
-    store.js                 # Configuration read/write
-    vault.js                 # safeStorage + PBKDF2 encryption/decryption
-    sessions.js              # Chat history persistence
-    provider-config.js       # Provider state management
-    health.js                # LLM connection status checks
-    bootstrap.js             # Approved service startup; no shell installer fallback
-    profiles.js              # System detection & distro profiling
-    ipc-handlers.js          # Electron IPC channel bindings
-  
-  core/
-    providers.js             # Provider orchestration & failover
-    tools.js                 # Tool exports gateway
-    tools/                   # Tool modules
-      index.js               # API schema + orchestration
-      info-tools.js          # Weather, datetime, web search
-      web-tools.js           # DuckDuckGo scraper, URL utilities
-      memory-tools.js        # Butler memory (remember/recall)
-      system-tools.js        # Command security, execution, file ops
-    rag.js                   # Local docs retrieval
-  
-  renderer/
-    index.html               # UI structure
-    app.js                   # Page boot + shortcuts
-    dom.js                   # DOM element cache
-    toasts.js                # Notification system
-    settings.js              # Settings modal
-    chat.js                  # Chat history + speech input
-    styles.css               # UI styling
-
-config/
-  distros.json               # 40+ distro profiles with docs roots, package managers, update commands
-  providers.json             # Provider defaults & enable/disable flags
-
-data/
-  docs/<profile>/            # Local distro documentation (crawled)
-
-scripts/
-  crawl-docs.js              # Distro docs ingestion helper
-  init-config.js             # Bootstrap config on first run
-  normalize-json.js          # JSON formatting utility
-
-.github/
-  workflows/
-    test.yml                 # GitHub Actions CI (Node v22, headless tests)
+```text
+history/conversations.sqlite       # current conversations and messages
+history/conversations.sqlite-wal   # may exist while the app is running
+history/conversations.sqlite-shm   # may exist while the app is running
+sessions/*.json                    # retained legacy history, if present
 ```
 
-## Quick Start
+On Linux, `userData` is normally beneath `$XDG_CONFIG_HOME` or `~/.config`, in the
+application's directory; development and packaged app names can differ.
 
-1. Install dependencies:
+First access imports valid legacy JSON files in the worker. Each file is imported
+in a transaction and recorded so restarts do not duplicate it or resurrect a
+conversation deleted after import. Originals remain unchanged. Malformed, linked
+or oversized files are skipped with a notification; the import limit is 10 MB per
+legacy file. Fixing a skipped file and restarting retries its import. New messages
+are limited to 1 MB each.
 
-```bash
-npm install
-```
+**Back up before upgrading:** fully quit Pennyworth, then copy the entire `userData`
+directory, including any SQLite sidecars. Do not copy just the database while the
+app is running. To restore, quit the app and restore the complete backup. If the
+database cannot be opened, the app reports an error rather than resetting history.
+Import error filenames/details are returned by the history-list IPC response;
+retained JSON files can be inspected to repair failed imports.
 
-2. Initialize provider config:
+History is local plaintext protected by filesystem permissions, not encrypted by
+the credential vault. Legacy backups also contain conversation text. Deleting an
+imported chat removes the active database records but does not erase its retained
+JSON backup or securely erase disk blocks. Older app versions do not see messages
+written only to SQLite; keep a backup and avoid using old/new versions concurrently.
 
-```bash
+## Voice input
+
+Local Whisper is the default. It runs quantized CPU inference in a worker and
+requires an initial model download; cached inference can work offline. Model
+loading has a five-minute deadline and inference a separate two-minute deadline.
+At most two requests wait behind the active request. Timeouts terminate the worker,
+and a later request can create a replacement.
+
+The UI reports model preparation, transcription, completion and failure. Settings
+also expose OpenAI, Gemini, Groq and automatic transcription choices. Cloud routing,
+real microphone behavior, slow CPUs and packaged inference still need end-to-end
+validation. Voice is input-only; text-to-speech is not implemented.
+
+## Run locally on Linux
+
+Use Node 22.13 or newer (Node 24 recommended). History uses built-in `node:sqlite`;
+the installed Electron runtime was checked for support.
+
+```sh
+npm ci --legacy-peer-deps
 npm run init:config
-```
-
-3. Normalize JSON (recommended on Windows):
-
-```bash
-npm run json:normalize
-```
-
-4. Run the app:
-
-```bash
 npm run dev
 ```
 
-5. Optional: crawl docs for CachyOS:
+The development command includes `--no-sandbox` for Electron compatibility. Normal
+startup (`npm start`) and packaged builds retain Electron sandboxing and require a
+working system sandbox configuration. This is separate from the Bubblewrap sandbox
+used by command tools. Do not distribute a build with Electron sandboxing disabled.
 
-```bash
+Configure the provider in Settings:
+
+- **Ollama:** running service, endpoint (default `http://127.0.0.1:11434`) and a
+  downloaded model. The setup flow may request approval to start the Linux service;
+  it does not execute downloaded shell installers.
+- **OpenAI:** API key and model; default `gpt-4o-mini`.
+- **Gemini:** API key and model; default `gemini-2.5-flash`.
+
+Keys use Electron safeStorage when a secure backend is available, otherwise the
+passphrase vault. Linux `basic_text` is rejected. This does not encrypt chat history.
+
+Optional local documentation ingestion:
+
+```sh
 npm run crawl:docs -- cachyos 50
 ```
 
-## Testing
+## Validation and performance
 
-Run the full test suite locally:
-
-```bash
+```sh
 npm test
-```
-
-This runs all 29 unit tests covering:
-- Command risk scoring and blocking
-- Sensitive path protection
-- Vault encryption/decryption
-- Session management
-- Provider health checks
-- Obfuscation bypass detection
-
-The CI pipeline runs tests automatically on every push to `main` and PR merge targets via GitHub Actions.
-
-## Build Targets
-
-```bash
-npm run dist:win
-npm run dist:mac
+node scripts/history-benchmark.js
+npm run test:electron                 # use xvfb-run -a on headless Linux
+npm run pack -- --linux
 npm run dist:linux
 ```
 
-or all configured targets:
+Current branch validation: **104 tests passed, zero failed, one real sandbox test
+skipped**. The unsigned Linux directory package built successfully, and its
+packaged SQLite worker created a conversation using isolated temporary data.
 
-```bash
-npm run dist
-```
+The synthetic history benchmark creates and deletes its own temporary fixtures;
+it never opens your actual history. On this workspace, with 1,000 conversations,
+109,900 messages and one 10,000-message chat:
 
-## Provider + Key Setup
+| Operation | Measured time |
+| --- | --- |
+| One legacy full-transcript scan | 149 ms |
+| Initial worker startup + import | 1.53 s |
+| Fetch 50 sidebar entries | 0.40 ms median / 1.13 ms p95 |
+| Fetch latest 50 messages of the long chat | 0.52 ms median / 1.36 ms p95 |
 
-### Ollama (Local)
-- Requires Ollama running locally (default: `http://127.0.0.1:11434`)
-- Model auto-discovery dropdown in settings
-- No API key required
+These are synthetic, warm storage-plus-worker timings, not guarantees of UI latency.
+The benchmark reports results for your hardware. Renderer tests check page batching
+and stale-response isolation; storage tests cover migration, pagination, title
+precedence, failure states, restart recovery and transaction rollback.
 
-### OpenAI
-- Enable provider in settings
-- Set API key in settings (encrypted via safeStorage or local vault)
-- Default model: `gpt-4o-mini`
+The sandboxed Electron GUI smoke is blocked locally by a misconfigured SUID sandbox
+helper. History storage/worker tests pass under Electron's actual Node runtime.
+The GUI smoke includes sidebar/message pagination and renaming checks for CI; an
+unexecuted GUI check is not a passing GUI check. Real Bubblewrap isolation also
+remains unavailable in this workspace. See the phase plan for the latest suite count.
 
-### Gemini
-- Enable provider in settings
-- Set API key in settings (encrypted via safeStorage or local vault)
-- Default model: `gemini-2.0-flash`
+CI is configured for tests and unsigned directory packages on Linux/macOS/Windows,
+plus a Linux job requiring real Bubblewrap isolation and an Xvfb renderer smoke.
+Cross-platform jobs are compatibility checks, not a claim of full product support.
 
-**Keys are stored securely:**
-- Electron's native `safeStorage` on all platforms (DPAPI/Keychain/Libsecret)
-- Falls back to local PBKDF2 vault (100,000 iterations + random salt) if system keychain unavailable
-- Sensitive path protection prevents accidental credential leaks
+## Remaining release work
 
-## Security & Corporate Network Support
+- Native Linux and real Flatpak tests for approvals, execution boundaries, desktop
+  sessions, cancellation, first-run setup and installed-package behavior.
+- More consistent OpenAI/Ollama handling when tool limits are reached.
+- Dependency/capability feedback, voice end-to-end checks, and broader upgrade and
+  credential recovery validation.
+- Independent security review, distribution/signing decisions, and tested update
+  and rollback delivery. No production security certification is claimed.
+- Windows/macOS command execution and non-Linux direct writes are disabled; full
+  parity remains outside this Linux release.
 
-### Custom Corporate CA Certificate
-If you're behind a corporate SSL-intercepting firewall:
+## Code map
 
-1. Export your Root CA certificate as a `.pem` file
-2. In Pennyworth settings, enable "Custom Root CA Certificate Path"
-3. Browse to your CA `.pem` file
-4. All HTTPS tool requests now validate against your CA (blocks MITM while maintaining connectivity)
-
-**Note:** This replaces the old blanket `NODE_TLS_REJECT_UNAUTHORIZED` bypass. All health checks and provider connectivity now enforce the custom CA agent.
-
-### File and command protection
-
-All file reads and writes require approval. Symlink aliases are rejected. Reviewed
-Linux writes retain a backup and use descriptor-relative file access. Known
-critical command patterns are blocked, but regex matching is not a complete shell
-security policy. Every host command requires approval, and unsupported execution
-targets fail closed. See [the detailed safety model](docs/EXECUTION-SAFETY.md).
-
-## Notes
-
-- Building mac artifacts is most reliable on macOS hosts.
-- Building Linux artifacts is most reliable on Linux hosts.
-- Screenshot behavior may vary by desktop/compositor (especially on Wayland).
-- For screenshot-aware answers, choose a vision-capable provider/model (e.g., GPT-4 Vision, Gemini 2.0 Flash).
-- All system-changing operations require explicit user approval via native OS dialogs.
-- Trace logs are visible in the developer panel for debugging provider/tool execution.
-
-## Pennyworth agent execution
-
-The assistant uses the Pennyworth name consistently. Provider attribution appears
-as “Pennyworth via Gemini” or the selected provider.
-
-- `get_execution_capabilities`: probe supported sandbox and host targets.
-- `diagnose_system`: approved, fixed host diagnostics with session verification.
-- `execute_system_command`: explicit sandbox/host target, risk/access labels and approval.
-- `read_system_file` / `write_system_file`: approved local filesystem operations.
-- `get_system_status`: local process-view metrics, labeled with execution context.
-- `remember_fact` / `recall_facts`: persistent facts, treated as untrusted evidence.
-
-OpenAI, Ollama and Gemini share one tool-schema source. Stop cancels active command
-process groups and prevents pending approvals from starting new commands. Completed
-changes are not rolled back automatically, and detached/privileged services have
-separate lifecycles. Provider failures do not replay tool attempts on another provider.
-
-The native Linux and Flatpak execution paths require platform testing before public
-release. Other host targets and non-Linux direct writes fail closed. See
-[execution safety and release validation](docs/EXECUTION-SAFETY.md) for restrictions,
-CI checks and remaining release gates.
+- `src/main/history.js`, `history-worker.js`, `history-database.js`: async history
+  bridge, worker and SQLite storage/migration.
+- `src/main/ipc-handlers.js`, `ipc-security.js`: guarded application operations.
+- `src/main/local-whisper.js`, `whisper-worker.js`: local speech lifecycle/inference.
+- `src/core/providers.js`, `conversation-title.js`: chat and background naming.
+- `src/core/execution-runner.js`, `safe-path.js`, `tools/`: execution and file controls.
+- `src/renderer/chat.js`, `settings.js`, `app.js`: conversation UI, settings and startup.
+- `src/tests/`: automated regression checks; `scripts/electron-smoke.js`: GUI smoke.
+- `config/distros.json`, `data/docs/`: distro profiles and retrieved documentation.

@@ -1463,3 +1463,17 @@ select:disabled {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+.history-load-more {
+  align-self: center;
+  padding: 6px 10px;
+  margin: 6px 0;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.history-load-more:hover { color: var(--text); background: var(--surface); }
+.history-load-more:disabled { opacity: 0.6; cursor: wait; }

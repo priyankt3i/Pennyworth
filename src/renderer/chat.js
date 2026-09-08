@@ -299,16 +299,14 @@ async function createNewSessionFlow() {
         );
       }
 
-      userMessage.querySelector(".message-meta").textContent = result.ok && !result.saveError ? "You" :
-      `You · ${result.session ? (/AGENT_STOPPED/.test(String(result.error)) ? "cancelled" : "failed") : "not saved"}`;
-    updateSessionSummary(result.session);
+      updateSessionSummary(result.session);
       setStatus("New chat ready.");
     } else {
-      setStatus("Failed to create new chat.", "error");
+      setStatus(`Failed to create new chat: ${extractErrorText(result.error)}`, "error");
     }
   } catch (error) {
     console.error("Failed to create new session:", error);
-    setStatus("Error creating new chat.", "error");
+    setStatus(`Error creating new chat: ${error.message}`, "error");
   } finally {
     setBusy(false);
   }
@@ -667,6 +665,8 @@ async function askAgent() {
       sessionId: requestSessionId,
     });
 
+    userMessage.querySelector(".message-meta").textContent = result.ok && !result.saveError ? "You" :
+      `You · ${result.session ? (/AGENT_STOPPED/.test(String(result.error)) ? "cancelled" : "failed") : "not saved"}`;
     updateSessionSummary(result.session);
     if (result.saveError) pushNotification("error", result.saveError);
     if (!result.ok) {

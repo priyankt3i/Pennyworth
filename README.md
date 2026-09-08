@@ -162,7 +162,7 @@ npm run pack -- --linux
 npm run dist:linux
 ```
 
-Current branch validation: **102 tests passed, zero failed, one real sandbox test
+Current branch validation: **104 tests passed, zero failed, one real sandbox test
 skipped**. The unsigned Linux directory package built successfully, and its
 packaged SQLite worker created a conversation using isolated temporary data.
 

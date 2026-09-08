@@ -71,3 +71,30 @@ test("a delayed older-message page cannot leak into a different conversation", a
   assert.equal(context.el.chat.children.filter(child => child.className.startsWith("message ")).length, 50);
   assert.equal(context.el.chat.children.at(-1).querySelector(".message-body").html, "B-99");
 });
+
+test("new chat selects and lists the created conversation without referencing a sent message", async () => {
+  const context = renderer();
+  const statuses = [];
+  context.setStatus = (message, kind) => statuses.push({ message, kind });
+  context.window.pennyworth.newSession = async () => ({ ok: true, sessionId: "new-chat", session: { id: "new-chat", title: "Untitled Chat", updatedAt: "2026-01-01" } });
+  vm.runInContext("checkActiveProviderStatus = async () => true", context);
+  await context.createNewSessionFlow();
+  assert.equal(context.state.activeSessionId, "new-chat");
+  assert.equal(context.state.sessions[0].id, "new-chat");
+  assert.equal(context.state.isBusy, false);
+  assert.equal(context.el.newChatBtn.disabled, false);
+  assert.equal(statuses.at(-1).message, "New chat ready.");
+  assert.equal(context.el.chat.children.length, 1);
+});
+
+test("new-chat storage failure shows its underlying reason without replacing the active chat", async () => {
+  const context = renderer();
+  context.state.activeSessionId = "existing";
+  const statuses = [];
+  context.setStatus = message => statuses.push(message);
+  context.window.pennyworth.newSession = async () => ({ ok: false, error: "disk full" });
+  await context.createNewSessionFlow();
+  assert.equal(context.state.activeSessionId, "existing");
+  assert.equal(context.state.isBusy, false);
+  assert.match(statuses.at(-1), /disk full/);
+});

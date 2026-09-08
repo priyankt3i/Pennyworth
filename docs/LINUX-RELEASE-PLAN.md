@@ -32,9 +32,11 @@ Implemented:
 - Backend-derived recent context, sidebar updates without a transcript rescan, and
   automatic/manual naming through the new store.
 - README updated for current scope, migration, backup, privacy and validation.
+- Fixed a misplaced sent-message status update that made New Chat report an error
+  after creating its record; added success/failure renderer regression coverage.
 
 Validation:
-- Full automated suite: 102 passed, zero failed, one real sandbox test skipped.
+- Full automated suite: 104 passed, zero failed, one real sandbox test skipped.
 - Storage tests pass under both installed Node and Electron's actual Node runtime.
 - Unsigned Linux directory package built; the worker inside its app archive created
   a conversation successfully using temporary test data.

@@ -89,3 +89,17 @@ Proposed branch: `fix/linux-release-validation`
 Verify CI and installed workflows on supported Linux desktops; audit dependencies,
 exercise security boundaries, validate upgrades/recovery, and prepare distribution
 and update delivery. Fix failures found before claiming production readiness.
+
+## Planned evaluation and differentiation work
+
+The [README roadmap](../README.md#product-direction-and-improvement-roadmap) records
+proposed Linux repair workflows, before/after verification, supported rollback,
+context improvements and privacy controls. These are planned improvements, not
+implemented differentiators or proven competitive advantages.
+
+The [evaluation plan](../README.md#planned-provider-and-product-evaluation) separates
+provider/model comparisons within Pennyworth (OpenAI, Gemini, Ollama) from product
+comparisons (Newelle, Goose, Open Interpreter, Warp, AIChat). Future Claude or
+OpenRouter support requires separate integration work. No comparative results are
+claimed yet. Define versioned fixtures and acceptance checks before paid API runs;
+record exact models, environment, budgets and independent task outcomes.

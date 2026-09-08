@@ -7,12 +7,43 @@ const axios = require("axios");
 
 const { storeGet, storeSet } = require("./store");
 const { getStoredApiKey, setStoredApiKey, clearStoredApiKey, getVaultStatus, setupVault, unlockVault } = require("./vault");
-const { getSessionFilePath, listSessions, loadSession, deleteSession } = require("./sessions");
+const { getSessionFilePath, listSessions, loadSession, deleteSession, renameSession, needsAutomaticTitle } = require("./sessions");
 const { bootstrapOllama, bootstrapSetDefaultProvider } = require("./bootstrap");
 const { getProviderState, saveProviderState, getProviderStateForUi } = require("./provider-config");
 const { listOllamaModels, listOpenAIModels, listGeminiModels, invalidateProviderHealthCache, getProviderHealth } = require("./health");
 const { runtimeState, getAgentContextState } = require("./profiles");
 const { transcribeLocalPcm, terminateWorker } = require("./local-whisper");
+
+const titleJobs = new Map();
+function scheduleAutomaticTitle(sessionId, sender, answeredProvider = null, activeConfig = null) {
+  if (titleJobs.has(sessionId)) return;
+  const job = (async () => {
+    // Yield so title generation never delays the chat response or session load.
+    await Promise.resolve();
+    const session = loadSession(sessionId);
+    if (!needsAutomaticTitle(session)) return;
+    const question = session.messages?.find(message => message.role === "user")?.content;
+    if (!question) return;
+    const config = activeConfig || getProviderState();
+    const provider = answeredProvider || session.titleProvider || config.defaultProvider;
+    const providerConfig = { ...config.providers?.[provider] };
+    if (!providerConfig.enabled) return;
+    if (provider === "openai" || provider === "gemini") {
+      providerConfig.apiKey = providerConfig.apiKey || await getStoredApiKey(provider) ||
+        process.env[provider === "openai" ? "OPENAI_API_KEY" : "GEMINI_API_KEY"];
+      if (!providerConfig.apiKey) return;
+    }
+    const { generateTitle } = require("../core/conversation-title");
+    const title = await generateTitle(provider, providerConfig, question, config.customCaCertPath);
+    // Reload before saving: manual renames and deletion can occur during inference.
+    const updated = renameSession(sessionId, title, "llm");
+    if (updated && sender && !sender.isDestroyed()) sender.send("pennyworth:session-renamed", updated);
+  })().catch(() => {
+    // A title failure must not fail the conversation. Opening it again retries.
+    console.warn("Automatic conversation title unavailable; will retry on next open or reply.");
+  }).finally(() => titleJobs.delete(sessionId));
+  titleJobs.set(sessionId, job);
+}
 
 function transcribeForSender(samples, sender) {
   return transcribeLocalPcm(samples, { onStatus: stage => {
@@ -805,12 +836,14 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
         const sessionFile = getSessionFilePath(sessionId);
         if (fs.existsSync(sessionFile)) {
           try {
-            const data = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
+            const data = loadSession(sessionId);
             data.messages = data.messages || [];
             data.messages.push({ role: "user", content: userPrompt });
             data.messages.push({ role: "assistant", content: result.reply });
             data.updatedAt = new Date().toISOString();
+            data.titleProvider = data.titleProvider || result.provider;
             fs.writeFileSync(sessionFile, JSON.stringify(data, null, 2), "utf8");
+            scheduleAutomaticTitle(sessionId, _event.sender, result.provider, activeConfig);
           } catch (e) {
             console.error("Failed to append reply to session file:", e.message);
           }
@@ -883,6 +916,7 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
     try {
       const session = loadSession(sessionId);
       if (session) {
+        scheduleAutomaticTitle(sessionId, _event.sender);
         return { ok: true, session };
       }
       return { ok: false, error: "Session not found." };
@@ -906,6 +940,12 @@ function pcmToWavBuffer(pcmSamples, sampleRate = 16000) {
     } catch (error) {
       return { ok: false, error: error.message };
     }
+  });
+
+  ipcMain.handle("pennyworth:rename-session", async (_event, payload) => {
+    try {
+      return { ok: true, session: renameSession(payload?.sessionId, payload?.title) };
+    } catch (error) { return { ok: false, error: error.message }; }
   });
 
   ipcMain.handle("pennyworth:delete-session", async (_event, sessionId) => {
